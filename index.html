@@ -152,9 +152,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
       <span class="funil-chevron">▾</span>
     </button>
     <div class="funil-menu" id="funil-menu" style="display:none">
-      <div class="funil-opt fopt-active" id="fopt-manual" onclick="selectFunil('manual')"><span class="fopt-dot"></span>Reto 14 Dias</div>
-      <div class="funil-opt" id="fopt-mapa" onclick="selectFunil('mapa')"><span class="fopt-dot"></span>Reto 14 Dias</div>
-      <div class="funil-opt" id="fopt-geral" onclick="selectFunil('geral')"><span class="fopt-dot"></span>Consolidado</div>
+      <div class="funil-opt fopt-active" id="fopt-reto" onclick="selectFunil('reto')"><span class="fopt-dot"></span>Reto 14 Dias</div>
     </div>
   </div>
 
@@ -191,8 +189,6 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
   <div id="page-trafego"         class="page"></div>
   <div id="page-anuncios"        class="page"></div>
   <div id="page-funil"           class="page"></div>
-  <div id="page-geral-principal" class="page"></div>
-  <div id="page-geral-funil"     class="page"></div>
 </div>
 
 <script>
@@ -242,7 +238,7 @@ const S = {
   metaByAd:{}, metaByAdByDate:{},
   vendasByAd:{}, vendasByAdDate:{},
   funilRows:[], funil:{}, updated:null,
-  loading:false, error:null, firstLoad:true,
+  loading:true, error:null, firstLoad:true,
   currentFunil:"reto",
   // Principal
   startDate:nDaysAgoISO(29), endDate:todayISO(), activeQuick:"30d",
@@ -270,8 +266,6 @@ function getCurrentPeriod(){
   if(p==='trafego')      return {s:S.tStartDate, e:S.tEndDate, q:S.tActiveQuick};
   if(p==='anuncios')     return {s:S.aStartDate, e:S.aEndDate, q:S.aActiveQuick};
   if(p==='funil')        return {s:S.fStartDate, e:S.fEndDate, q:S.fActiveQuick};
-  if(p==='geral-principal') return {s:S.gStartDate, e:S.gEndDate, q:S.gActiveQuick};
-  if(p==='geral-funil')  return {s:S.gfStartDate, e:S.gfEndDate, q:S.gfActiveQuick};
   return {s:S.startDate, e:S.endDate, q:S.activeQuick};
 }
 // Aplica quick ao período da página ativa
@@ -284,8 +278,6 @@ function applyQuickCurrent(k){
   if(p==='trafego'){S.tStartDate=r.s;S.tEndDate=r.e;S.tActiveQuick=k;}
   else if(p==='anuncios'){S.aStartDate=r.s;S.aEndDate=r.e;S.aActiveQuick=k;}
   else if(p==='funil'){S.fStartDate=r.s;S.fEndDate=r.e;S.fActiveQuick=k;}
-  else if(p==='geral-principal'){S.gStartDate=r.s;S.gEndDate=r.e;S.gActiveQuick=k;}
-  else if(p==='geral-funil'){S.gfStartDate=r.s;S.gfEndDate=r.e;S.gfActiveQuick=k;}
   else{S.startDate=r.s;S.endDate=r.e;S.activeQuick=k;}
   render();
 }
@@ -295,8 +287,6 @@ function onDCCurrent(w,v){
   if(p==='trafego'){if(w==='s')S.tStartDate=v;else S.tEndDate=v;S.tActiveQuick="";}
   else if(p==='anuncios'){if(w==='s')S.aStartDate=v;else S.aEndDate=v;S.aActiveQuick="";}
   else if(p==='funil'){if(w==='s')S.fStartDate=v;else S.fEndDate=v;S.fActiveQuick="";}
-  else if(p==='geral-principal'){if(w==='s')S.gStartDate=v;else S.gEndDate=v;S.gActiveQuick="";}
-  else if(p==='geral-funil'){if(w==='s')S.gfStartDate=v;else S.gfEndDate=v;S.gfActiveQuick="";}
   else{if(w==='s')S.startDate=v;else S.endDate=v;S.activeQuick="";}
   render();
 }
@@ -319,27 +309,21 @@ function selectFunil(id){
 
 function renderHeader(){
   const p=S.currentPage;
-  const isGeral=S.currentFunil==="geral";
   // Funil selector
-  const names={manual:"Manual Definitivo",mapa:"Mapa da Casa",geral:"Consolidado"};
-  const fn=document.getElementById("funil-name"); if(fn) fn.textContent=names[S.currentFunil]||"Manual Definitivo";
+  const fn=document.getElementById("funil-name"); if(fn) fn.textContent="Reto 14 Dias";
   const fs=document.getElementById("funil-status"); if(fs) fs.textContent="ativo";
-  ["manual","mapa","geral"].forEach(f=>{
-    const el=document.getElementById("fopt-"+f);
-    if(el) el.classList.toggle("fopt-active",f===S.currentFunil);
-  });
+  const el=document.getElementById("fopt-reto");
+  if(el) el.classList.add("fopt-active");
   // Tabs visibility
   const tabsEl=document.getElementById("hdr-tabs"); if(!tabsEl) return;
   const TABS=[{id:"principal",label:"⊞ Principal"},{id:"trafego",label:"⟳ Métricas tráfego"},{id:"funil",label:"▽ Métricas do funil"},{id:"anuncios",label:"◈ Anúncios"}];
-  const TABS=[{id:"geral-principal",label:"⊞ Principal"},{id:"geral-funil",label:"▽ Métricas do funil"}];
-  const tabs=TABS;
-  tabsEl.innerHTML=tabs.map(t=>`<button class="htab${p===t.id?" htab-active":""}" onclick="navTo('${t.id}')">${t.label}</button>`).join("");
+  tabsEl.innerHTML=TABS.map(t=>`<button class="htab${p===t.id?" htab-active":""}" onclick="navTo('${t.id}')">${t.label}</button>`).join("");
   // Period presets
   const per=getCurrentPeriod();
   const QUICKS=["hoje","ontem","7d","30d","mes"];
   const QLABEL={"hoje":"Hoje","ontem":"Ontem","7d":"7 dias","30d":"30 dias","mes":"Este mês"};
   // Funil pages have an extra "Todos" option
-  const isFunilPage=(p==="funil"||p==="geral-funil");
+  const isFunilPage=(p==="funil");
   const preEl=document.getElementById("hdr-presets"); if(!preEl) return;
   let presetsHtml=QUICKS.map(k=>`<button class="btn-pre${per.q===k?" on":""}" onclick="applyQuickCurrent('${k}')">${QLABEL[k]}</button>`).join("");
   if(isFunilPage) presetsHtml=`<button class="btn-pre${(!per.q||per.q==="all")?" on":""}" onclick="applyQuickCurrentAll()">Todos</button>`+presetsHtml;
@@ -352,9 +336,7 @@ function renderHeader(){
   if(bu){bu.textContent=S.loading?"↻ Carregando...":"↻ Atualizar";bu.disabled=S.loading;}
 }
 function applyQuickCurrentAll(){
-  const p=S.currentPage;
-  if(p==='funil'){S.fStartDate="";S.fEndDate="";S.fActiveQuick="all";}
-  else if(p==='geral-funil'){S.gfStartDate="";S.gfEndDate="";S.gfActiveQuick="all";}
+  S.fStartDate="";S.fEndDate="";S.fActiveQuick="all";
   render();
 }
 // Top-level versions of funilQuick (usadas no header)
@@ -368,19 +350,9 @@ function applyFunilQuick(k){
   else if(k==="mes"){S.fStartDate=firstOfMonthISO();S.fEndDate=t;}
   renderFunil();
 }
-function applyGeralFunilQuick(k){
-  S.gfActiveQuick=k;const t=todayISO();
-  if(k==="all"){S.gfStartDate="";S.gfEndDate="";}
-  else if(k==="hoje"){S.gfStartDate=t;S.gfEndDate=t;}
-  else if(k==="ontem"){const y=yesterdayISO();S.gfStartDate=y;S.gfEndDate=y;}
-  else if(k==="7d"){S.gfStartDate=nDaysAgoISO(6);S.gfEndDate=t;}
-  else if(k==="30d"){S.gfStartDate=nDaysAgoISO(29);S.gfEndDate=t;}
-  else if(k==="mes"){S.gfStartDate=firstOfMonthISO();S.gfEndDate=t;}
-  renderGeralFunil();
-}
 
-// ── Date helpers (GMT-3 São Paulo) ─────────────────────────────────────────
-function nowSP(){ return new Date(Date.now()-3*60*60*1000); }
+// ── Date helpers (GMT-6 México) ─────────────────────────────────────────────
+function nowSP(){ return new Date(Date.now()-6*60*60*1000); }
 function toISODate(d){ return d.toISOString().split("T")[0]; }
 function todayISO(){ return toISODate(nowSP()); }
 function yesterdayISO(){ const d=nowSP();d.setDate(d.getDate()-1);return toISODate(d); }
@@ -747,7 +719,7 @@ function getDayMetrics(iso){
 function switchFunil(id){
   // Funil único: Reto 14 Dias
   S.currentFunil="reto";
-  navTo(S.currentPage==="geral-principal"||S.currentPage==="geral-funil"?"principal":S.currentPage);
+  navTo(S.currentPage);
 }
 
 function navTo(page){
@@ -768,14 +740,12 @@ function applyQuick(k,prefix=""){
   if(!prefix){S.startDate=r.s;S.endDate=r.e;S.activeQuick=k;}
   else if(prefix==="t"){S.tStartDate=r.s;S.tEndDate=r.e;S.tActiveQuick=k;}
   else if(prefix==="a"){S.aStartDate=r.s;S.aEndDate=r.e;S.aActiveQuick=k;}
-  else if(prefix==="g"){S.gStartDate=r.s;S.gEndDate=r.e;S.gActiveQuick=k;}
   render();
 }
 function onDC(w,v,prefix=""){
   if(!prefix){if(w==="s")S.startDate=v;else S.endDate=v;S.activeQuick="";}
   else if(prefix==="t"){if(w==="s")S.tStartDate=v;else S.tEndDate=v;S.tActiveQuick="";}
   else if(prefix==="a"){if(w==="s")S.aStartDate=v;else S.aEndDate=v;S.aActiveQuick="";}
-  else if(prefix==="g"){if(w==="s")S.gStartDate=v;else S.gEndDate=v;S.gActiveQuick="";}
   render();
 }
 function sortAnuncios(col){
@@ -907,14 +877,14 @@ function drawDual(id,data,cssW,cssH){
     ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+cW,y);ctx.stroke();
     ctx.fillStyle=TICK_C;ctx.font="10px 'DM Mono',monospace";
     ctx.textAlign="right";ctx.fillText(fBRLShort(lMax-(i/4)*lMax),P.l-5,y+3.5);
-    ctx.textAlign="left";ctx.fillText("R$"+(rMax-(i/4)*rMax).toFixed(0),P.l+cW+5,y+3.5);
+    ctx.textAlign="left";ctx.fillText("MX$"+(rMax-(i/4)*rMax).toFixed(0),P.l+cW+5,y+3.5);
   }
   const mY=yPR(META_CPV);
   ctx.strokeStyle=CHART_CPV+"55";ctx.lineWidth=1;ctx.setLineDash([4,3]);
   ctx.beginPath();ctx.moveTo(P.l,mY);ctx.lineTo(P.l+cW,mY);ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle=CHART_CPV;ctx.font="9px 'Inter',sans-serif";ctx.textAlign="left";
-  ctx.fillText("Meta R$10",P.l+cW+4,mY-3);
+  ctx.fillText("Meta MX$"+META_CPV,P.l+cW+4,mY-3);
   drawLineArea(ctx,xP,yPL,lVals,CHART_INV,true);
   drawLineArea(ctx,xP,yPR,rVals,CHART_CPV,false);
   const step=data.length>60?7:data.length>30?3:data.length>14?2:1;
@@ -1044,7 +1014,7 @@ function renderPrincipal(){
     drawDual("c-dual",daily,mW,230);
     drawChartWithOverlay("c-roas", daily,"roas",  v=>v.toFixed(2)+"x",META_ROAS,"Meta 1.8x",false,false,sW,170);
     drawChartWithOverlay("c-fat",  daily,"faturamento",fBRLShort,null,null,false,false,sW,170);
-    drawChartWithOverlay("c-tick", daily,"ticket",fBRLShort,META_TICKET,"Meta R$18",false,false,sW,170);
+    drawChartWithOverlay("c-tick", daily,"ticket",fBRLShort,META_TICKET,"Meta MX$"+META_TICKET,false,false,sW,170);
     drawChartWithOverlay("c-lucro",daily,"lucro", fBRLShort,null,null,false,false,sW,170);
     setupTip("c-dual","t-dual",daily,[
       {key:"spend",color:CHART_INV,name:"Investimento"},
@@ -1114,8 +1084,8 @@ function renderTrafego(){
   // Gráficos em grade 2×3
   const CHART_CONFIGS=[
     {key:"ctr",      lbl:"CTR",                    fmt:fPct, meta:METAS_T.ctr.val,        metaLbl:"Meta 1,35%"},
-    {key:"cpm",      lbl:"CPM",                    fmt:fBRL, meta:METAS_T.cpm.val,        metaLbl:"Meta R$18,00"},
-    {key:"cpc",      lbl:"CPC",                    fmt:fBRL, meta:METAS_T.cpc.val,        metaLbl:"Meta R$1,33"},
+    {key:"cpm",      lbl:"CPM",                    fmt:fBRL, meta:METAS_T.cpm.val,        metaLbl:"Meta MX$18,00"},
+    {key:"cpc",      lbl:"CPC",                    fmt:fBRL, meta:METAS_T.cpc.val,        metaLbl:"Meta MX$1,33"},
     {key:"txPagChk", lbl:"Tx Pág → Checkout",      fmt:fPct, meta:METAS_T.txPagChk.val,  metaLbl:"Meta 25%"},
     {key:"txChkVnd", lbl:"Tx Checkout → Venda",    fmt:fPct, meta:METAS_T.txChkVnd.val,  metaLbl:"Meta 55%"},
     {key:"connect",  lbl:"Connect Rate",           fmt:fPct, meta:METAS_T.connect.val,    metaLbl:"Meta 85%"},
