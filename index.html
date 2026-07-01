@@ -540,14 +540,14 @@ async function loadData(force=false){
     if(!S.firstLoad) render();
     const _t=setTimeout(()=>{
       if(S.firstLoad){S.firstLoad=false;S.loading=false;
-        S.error="Tempo esgotado. Verifique a conexão e tente atualizar.";render();}
-    },90000);
+        S.error="Tempo esgotado (>2min). Verifique a conexão e tente atualizar.";render();}
+    },120000);
     try{
-      const [mr,rr,cr]=await Promise.all([fetch(URL_META),fetch(URL_RETO),fetch(URL_CERO)]);
-      if(!mr.ok) throw new Error(`HTTP ${mr.status} ao carregar Meta`);
-      if(!rr.ok) throw new Error(`HTTP ${rr.status} ao carregar Vendas Reto`);
-      if(!cr.ok) throw new Error(`HTTP ${cr.status} ao carregar Vendas Cero`);
-      [mj,retoJ,ceroJ]=await Promise.all([mr.json(),rr.json(),cr.json()]);
+      [mj,retoJ,ceroJ]=await Promise.all([
+        fetchSheetPaged(SHEET_ID,"Base Meta",API_KEY,5000),
+        fetchSheetPaged(SHEET_ID,"Vendas Hotmart - Reto",API_KEY,5000),
+        fetchSheetPaged(SHEET_ID,"Vendas Hotmart - Cero",API_KEY,5000),
+      ]);
       try{ localStorage.setItem("dash_reto_v1",JSON.stringify({mj,retoJ,ceroJ})); }catch(e){}
       clearTimeout(_t);
     }catch(e){
