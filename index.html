@@ -194,11 +194,11 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 
 <script>
 const IS_FILE = location.protocol === "file:";
-const SHEET_ID  = "1saA8fl4L70Fmoxj3YuVB3D29fbGGMPU8i0hQpnoldlE";
-const API_KEY   = "AIzaSyDxMp-u0RUfy-Xv0jICULZbJGpuAUxqQPI";
-const URL_META  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent("Base Meta")}?key=${API_KEY}`;
-const URL_RETO  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent("Vendas Hotmart - Reto")}?key=${API_KEY}`;
-const URL_CERO  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent("Vendas Hotmart - Cero")}?key=${API_KEY}`;
+
+// ── Fontes de dados — CSVs na mesma pasta ──────────────────────────────────
+const CSV_META = "Base dashboard - Página1.csv";
+const CSV_RETO = "Base dashboard - Vendas Hotmart - Reto.csv";
+const CSV_CERO = "Base dashboard - Vendas Hotmart - Cero.csv";
 
 // Mapeamento do funil — ordem importa
 // Funil: Reto 14 Dias (front-end) → Cero (upsell)
@@ -501,40 +501,42 @@ function parseHotmartRows(sheetJ){
 
 // ── Load data ──────────────────────────────────────────────────────────────
 // Busca uma aba em blocos de 5000 linhas para evitar timeout em abas grandes
-async function fetchSheetPaged(sheetId, tabName, apiKey, blockSize=5000){
-  console.log(`[fetch] iniciando "${tabName}"...`);
-  const base=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/`;
-  const enc=encodeURIComponent(tabName);
-  const headUrl=`${base}${enc}!A1:ZZ1?key=${apiKey}`;
-  console.log(`[fetch] header URL: ${headUrl}`);
-  const headRes=await fetch(headUrl);
-  if(!headRes.ok){
-    const errBody=await headRes.text().catch(()=>"");
-    throw new Error(`HTTP ${headRes.status} ao carregar "${tabName}": ${errBody.slice(0,200)}`);
-  }
-  const headJ=await headRes.json();
-  const header=(headJ.values||[])[0]||[];
-  console.log(`[fetch] "${tabName}" header: ${header.length} colunas`);
-  let allRows=[header];
-  let startRow=2;
-  while(true){
-    const endRow=startRow+blockSize-1;
-    const range=`${enc}!A${startRow}:ZZ${endRow}`;
-    const res=await fetch(`${base}${range}?key=${apiKey}`);
-    if(!res.ok){
-      const errBody=await res.text().catch(()=>"");
-      throw new Error(`HTTP ${res.status} ao carregar "${tabName}" (linha ${startRow}): ${errBody.slice(0,200)}`);
+// ── CSV parser → mesmo formato que a Sheets API {values:[rows]} ───────────
+function parseCSVText(text){
+  const lines=text.split(/\r?\n/);
+  const result=[];
+  for(const line of lines){
+    if(!line.trim()) continue;
+    const row=[];let cur="";let inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){
+        if(inQ&&line[i+1]==='"'){cur+='"';i++;}
+        else inQ=!inQ;
+      } else if(c===','&&!inQ){row.push(cur);cur="";}
+      else cur+=c;
     }
-    const j=await res.json();
-    const rows=j.values||[];
-    console.log(`[fetch] "${tabName}" rows ${startRow}-${endRow}: ${rows.length} linhas`);
-    if(!rows.length) break;
-    allRows=[...allRows,...rows];
-    if(rows.length<blockSize) break;
-    startRow+=blockSize;
+    row.push(cur);
+    result.push(row);
   }
-  console.log(`[fetch] "${tabName}" concluído: ${allRows.length-1} linhas de dados`);
-  return {values:allRows};
+  return {values:result};
+}
+
+async function fetchCSV(filename){
+  console.log(`[csv] carregando "${filename}"...`);
+  const res=await fetch("./"+encodeURIComponent(filename));
+  if(!res.ok) throw new Error(`HTTP ${res.status} ao carregar "${filename}"`);
+  const text=await res.text();
+  const j=parseCSVText(text);
+  console.log(`[csv] "${filename}": ${j.values.length-1} linhas de dados`);
+  return j;
+}
+
+async function fetchCSVSafe(filename){
+  return fetchCSV(filename).catch(e=>{
+    console.warn(`[csv] "${filename}" não encontrado:`,e.message);
+    return {values:[]};
+  });
 }
 
 async function loadData(force=false){
@@ -553,17 +555,13 @@ async function loadData(force=false){
     if(!S.firstLoad) render();
     const _t=setTimeout(()=>{
       if(S.firstLoad){S.firstLoad=false;S.loading=false;
-        S.error="Tempo esgotado (>2min). Verifique a conexão e tente atualizar.";render();}
-    },120000);
+        S.error="Tempo esgotado. Verifique se os CSVs estão na mesma pasta que o index.html e tente atualizar.";render();}
+    },15000);
     try{
-      const EMPTY={values:[]};
-      const safeFetch=(tab)=>fetchSheetPaged(SHEET_ID,tab,API_KEY,5000).catch(e=>{
-        console.warn(`Aba "${tab}" não encontrada ou vazia:`,e.message);return EMPTY;
-      });
       [mj,retoJ,ceroJ]=await Promise.all([
-        fetchSheetPaged(SHEET_ID,"Base Meta",API_KEY,5000),
-        fetchSheetPaged(SHEET_ID,"Vendas Hotmart - Reto",API_KEY,5000),
-        safeFetch("Vendas Hotmart - Cero"),
+        fetchCSV(CSV_META),
+        fetchCSV(CSV_RETO),
+        fetchCSVSafe(CSV_CERO),
       ]);
       try{ localStorage.setItem("dash_reto_v1",JSON.stringify({mj,retoJ,ceroJ})); }catch(e){}
       clearTimeout(_t);
