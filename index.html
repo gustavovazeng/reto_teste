@@ -185,6 +185,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 <!-- ─── Content ──────────────────────────────────────────────────── -->
 <div class="app-content">
   <div class="sw" id="loading"><div class="sp"></div><p class="st">Carregando dados...</p></div>
+  <div id="err-panel" style="display:none;align-items:flex-start;justify-content:center;padding:40px 24px"></div>
   <div id="page-principal"       class="page active"></div>
   <div id="page-trafego"         class="page"></div>
   <div id="page-anuncios"        class="page"></div>
@@ -501,26 +502,38 @@ function parseHotmartRows(sheetJ){
 // ── Load data ──────────────────────────────────────────────────────────────
 // Busca uma aba em blocos de 5000 linhas para evitar timeout em abas grandes
 async function fetchSheetPaged(sheetId, tabName, apiKey, blockSize=5000){
+  console.log(`[fetch] iniciando "${tabName}"...`);
   const base=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/`;
   const enc=encodeURIComponent(tabName);
-  const headRes=await fetch(`${base}${enc}!A1:ZZ1?key=${apiKey}`);
-  if(!headRes.ok) throw new Error(`HTTP ${headRes.status} ao carregar ${tabName}`);
+  const headUrl=`${base}${enc}!A1:ZZ1?key=${apiKey}`;
+  console.log(`[fetch] header URL: ${headUrl}`);
+  const headRes=await fetch(headUrl);
+  if(!headRes.ok){
+    const errBody=await headRes.text().catch(()=>"");
+    throw new Error(`HTTP ${headRes.status} ao carregar "${tabName}": ${errBody.slice(0,200)}`);
+  }
   const headJ=await headRes.json();
   const header=(headJ.values||[])[0]||[];
+  console.log(`[fetch] "${tabName}" header: ${header.length} colunas`);
   let allRows=[header];
   let startRow=2;
   while(true){
     const endRow=startRow+blockSize-1;
     const range=`${enc}!A${startRow}:ZZ${endRow}`;
     const res=await fetch(`${base}${range}?key=${apiKey}`);
-    if(!res.ok) throw new Error(`HTTP ${res.status} ao carregar ${tabName} (linha ${startRow})`);
+    if(!res.ok){
+      const errBody=await res.text().catch(()=>"");
+      throw new Error(`HTTP ${res.status} ao carregar "${tabName}" (linha ${startRow}): ${errBody.slice(0,200)}`);
+    }
     const j=await res.json();
     const rows=j.values||[];
+    console.log(`[fetch] "${tabName}" rows ${startRow}-${endRow}: ${rows.length} linhas`);
     if(!rows.length) break;
     allRows=[...allRows,...rows];
     if(rows.length<blockSize) break;
     startRow+=blockSize;
   }
+  console.log(`[fetch] "${tabName}" concluído: ${allRows.length-1} linhas de dados`);
   return {values:allRows};
 }
 
@@ -543,18 +556,22 @@ async function loadData(force=false){
         S.error="Tempo esgotado (>2min). Verifique a conexão e tente atualizar.";render();}
     },120000);
     try{
+      const EMPTY={values:[]};
+      const safeFetch=(tab)=>fetchSheetPaged(SHEET_ID,tab,API_KEY,5000).catch(e=>{
+        console.warn(`Aba "${tab}" não encontrada ou vazia:`,e.message);return EMPTY;
+      });
       [mj,retoJ,ceroJ]=await Promise.all([
         fetchSheetPaged(SHEET_ID,"Base Meta",API_KEY,5000),
         fetchSheetPaged(SHEET_ID,"Vendas Hotmart - Reto",API_KEY,5000),
-        fetchSheetPaged(SHEET_ID,"Vendas Hotmart - Cero",API_KEY,5000),
+        safeFetch("Vendas Hotmart - Cero"),
       ]);
       try{ localStorage.setItem("dash_reto_v1",JSON.stringify({mj,retoJ,ceroJ})); }catch(e){}
       clearTimeout(_t);
     }catch(e){
       clearTimeout(_t);
-      S.error="Erro ao carregar: "+e.message;
+      S.error=e.message;
       S.firstLoad=false; S.loading=false;
-      console.error("loadData error:",e); render(); return;
+      console.error("[loadData] erro:",e); render(); return;
     }
     S.loading=false;
   }
@@ -1839,6 +1856,20 @@ function render(){
         <code style="display:block;background:var(--surf);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)">http://localhost:8080/</code>
       </div>`;
     return;
+  }
+  // Painel de erro visível
+  const errEl=document.getElementById("err-panel");
+  if(errEl){
+    if(S.error){
+      errEl.style.display="flex";
+      errEl.innerHTML=`<div style="background:#1e1014;border:1px solid #f87171;border-radius:12px;padding:24px 28px;max-width:700px;width:100%">
+        <div style="color:#f87171;font-weight:700;font-size:15px;margin-bottom:12px">⚠️ Erro ao carregar dados</div>
+        <code style="display:block;color:#fca5a5;font-size:12px;font-family:'JetBrains Mono',monospace;white-space:pre-wrap;word-break:break-all;line-height:1.6">${S.error}</code>
+        <button onclick="localStorage.removeItem('dash_reto_v1');loadData(true)" style="margin-top:16px;padding:8px 18px;background:#3b82f6;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px">↻ Tentar novamente</button>
+        <button onclick="navigator.clipboard.writeText(${JSON.stringify(JSON.stringify(S.error))})" style="margin-top:16px;margin-left:8px;padding:8px 18px;background:var(--surf);color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px">📋 Copiar erro</button>
+      </div>`;
+      return;
+    } else { errEl.style.display="none"; }
   }
   if(S.currentPage==="principal") renderPrincipal();
   else if(S.currentPage==="trafego") renderTrafego();
