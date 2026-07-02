@@ -190,7 +190,6 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
   <div id="page-funil"           class="page"></div>
   <div id="page-trafego"         class="page"></div>
   <div id="page-anuncios"        class="page"></div>
-  <div id="page-campanhas"       class="page"></div>
 </div>
 
 <script>
@@ -256,6 +255,7 @@ const S = {
   startDate:nDaysAgoISO(29), endDate:todayISO(), activeQuick:"30d",
   aSort:{col:"spend",dir:"desc"},
   cSort:{col:"spend",dir:"desc"},
+  selectedCamps:new Set(),
   aTab:"tempo",
   anaStartDate:"", anaEndDate:"", anaActiveQuick:"all",
   anaTempoProd1:"reto", anaTempoProd2:"cero",
@@ -310,7 +310,7 @@ function renderHeader(){
   if(el) el.classList.add("fopt-active");
   // Tabs visibility
   const tabsEl=document.getElementById("hdr-tabs"); if(!tabsEl) return;
-  const TABS=[{id:"principal",label:"⊞ Principal"},{id:"funil",label:"▽ Métricas do funil"},{id:"trafego",label:"⟳ Métricas tráfego"},{id:"anuncios",label:"◈ Anúncios"},{id:"campanhas",label:"🗂 Campanhas"}];
+  const TABS=[{id:"principal",label:"⊞ Principal"},{id:"funil",label:"▽ Métricas do funil"},{id:"trafego",label:"⟳ Métricas tráfego"},{id:"anuncios",label:"◈ Campanhas / Anúncios"}];
   tabsEl.innerHTML=TABS.map(t=>`<button class="htab${p===t.id?" htab-active":""}" onclick="navTo('${t.id}')">${t.label}</button>`).join("");
   // Period presets
   const per=getCurrentPeriod();
@@ -824,7 +824,16 @@ function onDC(w,v){
 function sortCampanhas(col){
   if(S.cSort.col===col) S.cSort.dir=S.cSort.dir==="asc"?"desc":"asc";
   else {S.cSort.col=col;S.cSort.dir="desc";}
-  renderCampanhas();
+  renderAnuncios();
+}
+function toggleCamp(name){
+  if(S.selectedCamps.has(name)) S.selectedCamps.delete(name);
+  else S.selectedCamps.add(name);
+  renderAnuncios();
+}
+function clearCamps(){
+  S.selectedCamps.clear();
+  renderAnuncios();
 }
 function sortAnuncios(col){
   if(S.aSort.col===col) S.aSort.dir=S.aSort.dir==="asc"?"desc":"asc";
@@ -1209,193 +1218,227 @@ function renderTrafego(){
   });
 }
 
-// ── Render Anúncios ────────────────────────────────────────────────────────
+// ── Render Campanhas + Anúncios (aba unificada) ───────────────────────────
 function renderAnuncios(){
   const el=document.getElementById("page-anuncios");if(!el)return;
+  const dd=D();
+  const start=S.startDate, end=S.endDate;
 
-  // Constrói tabela de anúncios no período selecionado
-  // Para cada advCode, soma invest da base Meta e vendas da base Vendas
-  // cruzando pelo Ad ID
-  function buildAdRows(start,end){
-    const dd=D();
-    const currentFunil="reto";
-    const principalId="reto";
+  // ── 1. Constrói linhas de campanha ──────────────────────────────────────
+  const campRows=[];
+  for(const [campName,meta] of Object.entries(dd.metaByCamp)){
+    const byDate=dd.metaByCampByDate[campName]||{};
+    let cSpend=0,cClicks=0,cImpr=0;
+    const adIdsC=new Set();
+    for(const [d,vals] of Object.entries(byDate)){
+      if(d>=start&&d<=end){
+        cSpend+=vals.spend;cClicks+=vals.clicks;cImpr+=vals.impressions;
+        vals.adIds.forEach(id=>adIdsC.add(id));
+      }
+    }
+    if(cSpend===0) continue;
+    let cQtd=0,cVal=0;
+    for(const adId of adIdsC){
+      const byD=dd.vendasByAdDate[adId]||{};
+      for(const [vd,vv] of Object.entries(byD)){
+        if(vd>=start&&vd<=end){cQtd+=vv.qtd;cVal+=vv.valor;}
+      }
+    }
+    campRows.push({campName,spend:cSpend,clicks:cClicks,impressions:cImpr,
+      qtd:cQtd,valor:cVal,
+      cpc:cClicks>0?cSpend/cClicks:0,
+      ctr:cImpr>0?(cClicks/cImpr)*100:0,
+      cpm:cImpr>0?(cSpend/cImpr)*1000:0,
+      cpv:cQtd>0?cSpend/cQtd:0,
+      roas:cSpend>0?cVal/cSpend:0,
+      ticket:cQtd>0?cVal/cQtd:0,
+      adIds:adIdsC});
+  }
+  const {col:cCol,dir:cDir}=S.cSort;
+  const sortedCamps=[...campRows].sort((a,b)=>{
+    const av=a[cCol]??0,bv=b[cCol]??0;
+    if(typeof av==="string") return cDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
+    return cDir==="asc"?av-bv:bv-av;
+  });
 
-    // Passo 0: mapa de identidades unificado (email + cpf + tel → chave canônica)
-    // Garante que o mesmo comprador é reconhecido mesmo usando campos diferentes em compras distintas
+  // ── 2. Determina adIds permitidos pelo filtro de campanhas ───────────────
+  const hasFilter=S.selectedCamps.size>0;
+  let allowedAdIds=null;
+  if(hasFilter){
+    allowedAdIds=new Set();
+    for(const c of campRows){
+      if(S.selectedCamps.has(c.campName)) c.adIds.forEach(id=>allowedAdIds.add(id));
+    }
+  }
+
+  // ── 3. Constrói linhas de anúncios ──────────────────────────────────────
+  function buildAdRows(start,end,allowedAdIds){
+    const currentFunil="reto",principalId="reto";
     const identMap=new Map();
     function getIdKeys(r){
       const ks=[];
       const em=(r["Email"]||"").toLowerCase().trim();
       const cpf=(r["CPF Comprador"]||"").replace(/[^\d]/g,"");
       const tel=(r["Telefone"]||"").replace(/[^\d]/g,"");
-      if(em)  ks.push("e:"+em);
+      if(em) ks.push("e:"+em);
       if(cpf) ks.push("c:"+cpf);
       if(tel) ks.push("t:"+tel);
       return ks;
     }
     for(const r of dd.funilRows){
-      const ks=getIdKeys(r); if(!ks.length) continue;
+      const ks=getIdKeys(r);if(!ks.length)continue;
       let canonical=null;
-      for(const k of ks){ if(identMap.has(k)){canonical=identMap.get(k);break;} }
+      for(const k of ks){if(identMap.has(k)){canonical=identMap.get(k);break;}}
       if(!canonical) canonical=ks[0];
       for(const k of ks) identMap.set(k,canonical);
     }
     function getCanonical(r){
       const ks=getIdKeys(r);
-      for(const k of ks){ if(identMap.has(k)) return identMap.get(k); }
+      for(const k of ks){if(identMap.has(k)) return identMap.get(k);}
       return ks[0]||null;
     }
-
-    // Passo A: adId → Set de eventos de compra (canonical+data) do produto principal
-    // Usa chave canonical+data (igual ao dedup de vendasByAdDate) para alinhar os dois lados
-    const adBuyersMap=new Map();  // adId → Set de eventKeys ("canonical|date")
+    const adBuyersMap=new Map();
     for(const r of dd.funilRows){
       const dt=toISO(r["Data da compra"]||"")||"";
       if(dt<start||dt>end) continue;
       if((r["Status da compra"]||"").trim()!=="Paga") continue;
       if(classifyProduct(r["Nome do produto"]||"",currentFunil)!==principalId) continue;
-      const adId=extractAdId(r["Ad Id"]||""); if(!adId) continue;
-      const key=getCanonical(r); if(!key) continue;
+      const adId=extractAdId(r["Ad Id"]||"");if(!adId)continue;
+      const key=getCanonical(r);if(!key)continue;
       const eventKey=key+"|"+dt;
       if(!adBuyersMap.has(adId)) adBuyersMap.set(adId,new Set());
       adBuyersMap.get(adId).add(eventKey);
     }
-
-    // Passo B: evento (canonical+data) → totalGasto naquele dia (todos os produtos Paga)
     const eventTotalSpent=new Map();
     for(const r of dd.funilRows){
       const dt=toISO(r["Data da compra"]||"")||"";
       if(dt<start||dt>end) continue;
       if((r["Status da compra"]||"").trim()!=="Paga") continue;
-      const key=getCanonical(r); if(!key) continue;
+      const key=getCanonical(r);if(!key)continue;
       const eventKey=key+"|"+dt;
-      const val=(parseFloat(r["Valor do produto"])||0);
-      eventTotalSpent.set(eventKey,(eventTotalSpent.get(eventKey)||0)+val);
+      eventTotalSpent.set(eventKey,(eventTotalSpent.get(eventKey)||0)+(parseFloat(r["Valor do produto"])||0));
     }
-
     const rows=[];
     for(const [advCode,meta] of Object.entries(dd.metaByAd)){
       const byDate=dd.metaByAdByDate[advCode]||{};
-      let spend=0,clicks=0,impressions=0;
-      let igUrl="";
+      let spend=0,clicks=0,impressions=0,igUrl="";
       const adIdsInPeriod=new Set();
       for(const [d,vals] of Object.entries(byDate)){
-        if(d>=start && d<=end){
-          spend+=vals.spend; clicks+=vals.clicks; impressions+=vals.impressions;
+        if(d>=start&&d<=end){
+          spend+=vals.spend;clicks+=vals.clicks;impressions+=vals.impressions;
           vals.adIds.forEach(id=>adIdsInPeriod.add(id));
-          if(!igUrl && vals.igUrl) igUrl=vals.igUrl;
+          if(!igUrl&&vals.igUrl) igUrl=vals.igUrl;
         }
       }
       if(spend===0) continue;
+      // Filtrar por campainha selecionada
+      if(allowedAdIds){
+        const useIds=adIdsInPeriod.size>0?adIdsInPeriod:meta.adIds;
+        const intersects=[...useIds].some(id=>allowedAdIds.has(id));
+        if(!intersects) continue;
+      }
       let qtd=0,valor=0,taxa=0;
       const useIds=adIdsInPeriod.size>0?adIdsInPeriod:meta.adIds;
       for(const adId of useIds){
         const byD=dd.vendasByAdDate[adId]||{};
         for(const [vd,vvals] of Object.entries(byD)){
-          if(vd>=start && vd<=end){ qtd+=vvals.qtd; valor+=vvals.valor; taxa+=vvals.taxa; }
+          if(vd>=start&&vd<=end){qtd+=vvals.qtd;valor+=vvals.valor;taxa+=vvals.taxa;}
         }
       }
       if(!igUrl) igUrl=meta.igUrl;
-
-      // Ticket Médio Ascensões: soma gasto de cada evento de compra atribuído a este ad
       let totalAscensoes=0;
       for(const adId of useIds){
         for(const eventKey of (adBuyersMap.get(adId)||new Set())){
           totalAscensoes+=(eventTotalSpent.get(eventKey)||0);
         }
       }
-
-      const cpc=clicks>0?spend/clicks:0;
-      const ctr=impressions>0?(clicks/impressions)*100:0;
-      const cpm=impressions>0?(spend/impressions)*1000:0;
-      const cpv=qtd>0?spend/qtd:0;
-      const ticket=qtd>0?valor/qtd:0;
-      const ticketAsc=qtd>0?totalAscensoes/qtd:0;
-      rows.push({advCode,spend,clicks,impressions,qtd,valor,cpc,ctr,cpm,cpv,ticket,ticketAsc,igUrl});
+      rows.push({advCode,spend,clicks,impressions,qtd,valor,igUrl,
+        cpc:clicks>0?spend/clicks:0,
+        ctr:impressions>0?(clicks/impressions)*100:0,
+        cpm:impressions>0?(spend/impressions)*1000:0,
+        cpv:qtd>0?spend/qtd:0,
+        ticket:qtd>0?valor/qtd:0,
+        ticketAsc:qtd>0?totalAscensoes/qtd:0});
     }
     return rows.filter(r=>r.spend>0);
   }
 
-  const rows=buildAdRows(S.startDate,S.endDate);
+  const adRows=buildAdRows(start,end,allowedAdIds);
 
-  // Totais do período (usa dados diários já calculados)
-  const dailyA=[];
-  const _da=D();
-  const allDates=new Set([...Object.keys(_da.meta),...Object.keys(_da.vendas)]);
-  for(const d of Array.from(allDates).sort()){
-    if(d<S.startDate||d>S.endDate) continue;
-    const m=_da.meta[d]||{spend:0,clicks:0,impressions:0};
-    const v=_da.vendas[d]||{qtd:0,valor:0};
-    dailyA.push({spend:m.spend,clicks:m.clicks,impressions:m.impressions,qtd:v.qtd,valor:v.valor});
+  // ── 4. Totais KPI (do período filtrado) ─────────────────────────────────
+  // Se há filtro de campanhas, agrega só das campanhas selecionadas; caso contrário usa dados diários
+  let tot;
+  if(hasFilter){
+    tot=campRows.filter(c=>S.selectedCamps.has(c.campName))
+      .reduce((a,c)=>({spend:a.spend+c.spend,clicks:a.clicks+c.clicks,
+        impressions:a.impressions+c.impressions,qtd:a.qtd+c.qtd,valor:a.valor+c.valor}),
+        {spend:0,clicks:0,impressions:0,qtd:0,valor:0});
+  } else {
+    const _da=D();
+    const dailyA=[];
+    for(const d of Array.from(new Set([...Object.keys(_da.meta),...Object.keys(_da.vendas)])).sort()){
+      if(d<start||d>end) continue;
+      const m=_da.meta[d]||{spend:0,clicks:0,impressions:0};
+      const v=_da.vendas[d]||{qtd:0,valor:0};
+      dailyA.push({spend:m.spend,clicks:m.clicks,impressions:m.impressions,qtd:v.qtd,valor:v.valor});
+    }
+    tot=dailyA.reduce((a,d)=>({spend:a.spend+d.spend,clicks:a.clicks+d.clicks,
+      impressions:a.impressions+d.impressions,qtd:a.qtd+d.qtd,valor:a.valor+d.valor}),
+      {spend:0,clicks:0,impressions:0,qtd:0,valor:0});
   }
-  const tot=dailyA.reduce((a,d)=>({
-    spend:a.spend+d.spend,clicks:a.clicks+d.clicks,
-    impressions:a.impressions+d.impressions,qtd:a.qtd+d.qtd,valor:a.valor+d.valor
-  }),{spend:0,clicks:0,impressions:0,qtd:0,valor:0});
   const totCpc=tot.clicks>0?tot.spend/tot.clicks:0;
   const totCtr=tot.impressions>0?(tot.clicks/tot.impressions)*100:0;
   const totCpm=tot.impressions>0?(tot.spend/tot.impressions)*1000:0;
   const totCpv=tot.qtd>0?tot.spend/tot.qtd:0;
   const totTicket=tot.qtd>0?tot.valor/tot.qtd:0;
-  const rowsQtd=rows.reduce((a,r)=>a+r.qtd,0);
-  // totTicketAsc = LTV: gasto total / compradores únicos do produto principal (= buildFunilData.ltv)
-  // Usa mesma lógica de dedup que buildFunilData (identity+data) para incluir todos os compradores,
-  // mesmo os sem adId, e inclui planLucro/Curso comprados em dias diferentes
   {
-    const _dd=D();
-    const _pId="reto";
-    const _bSpent=new Map(); // identity → total gasto no período
-    const _bPrinc=new Set(); // identities que compraram o produto principal
+    const _dd=D();const _pId="reto";
+    const _bSpent=new Map(),_bPrinc=new Set();
     for(const r of _dd.funilRows){
       const dt=toISO(r["Data da compra"]||"")||"";
-      if(dt<S.startDate||dt>S.endDate) continue;
+      if(dt<start||dt>end) continue;
       if((r["Status da compra"]||"").trim()!=="Paga") continue;
       const em=(r["Email"]||"").toLowerCase().trim();
       const cpf=(r["CPF Comprador"]||"").replace(/[^\d]/g,"");
       const tel=(r["Telefone"]||"").replace(/[^\d]/g,"");
-      const id=em||cpf||tel; if(!id) continue;
-      const val=(parseFloat(r["Valor do produto"])||0);
-      _bSpent.set(id,(_bSpent.get(id)||0)+val);
+      const id=em||cpf||tel;if(!id) continue;
+      _bSpent.set(id,(_bSpent.get(id)||0)+(parseFloat(r["Valor do produto"])||0));
       if(classifyProduct(r["Nome do produto"]||"",_pId)===_pId) _bPrinc.add(id);
     }
-    let _fat=0; for(const k of _bPrinc) _fat+=(_bSpent.get(k)||0);
+    let _fat=0;for(const k of _bPrinc)_fat+=(_bSpent.get(k)||0);
     var totTicketAsc=_bPrinc.size>0?_fat/_bPrinc.size:0;
   }
 
-  // Ordenação
+  // ── 5. Ordenação anúncios ────────────────────────────────────────────────
   const {col,dir}=S.aSort;
-  const sorted=[...rows].sort((a,b)=>{
-    const av=a[col]??0, bv=b[col]??0;
+  const sorted=[...adRows].sort((a,b)=>{
+    const av=a[col]??0,bv=b[col]??0;
     if(typeof av==="string") return dir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
     return dir==="asc"?av-bv:bv-av;
   });
 
-  function thSort(c,lbl){
-    const active=col===c;
-    const arrow=active?(dir==="asc"?" ↑":" ↓"):" ↕";
-    return `<th onclick="sortAnuncios('${c}')" style="padding:10px 14px;text-align:center;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:${active?"var(--text-strong)":"#7a6c5e"};cursor:pointer;user-select:none;border-bottom:1px solid var(--border);border-right:1px solid var(--border);white-space:nowrap">${lbl}<span style="color:${active?"#e8621a":"#d8cfc3"};font-size:10px;margin-left:3px">${arrow}</span></th>`;
-  }
-
   function sc(v,meta,hi){return statusColor(v,meta,hi);}
 
-  function thRow(c,lbl){
-    const active=col===c;
-    const arrow=active?(dir==="asc"?" ↑":" ↓"):" ↕";
-    return `<th onclick="sortAnuncios('${c}')" style="padding:10px 14px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:${active?"var(--text)":"var(--hint)"};cursor:pointer;user-select:none;border-bottom:1px solid var(--border);white-space:nowrap">${lbl}<span style="color:${active?"#60a5fa":"var(--hint)"};font-size:9px;margin-left:3px">${arrow}</span></th>`;
+  function thC(col_,lbl,sortFn){
+    const active=(sortFn==="camp"?cCol:col)===col_;
+    const activeDir=sortFn==="camp"?cDir:dir;
+    const arrow=active?(activeDir==="asc"?" ↑":" ↓"):" ↕";
+    const fn=sortFn==="camp"?`sortCampanhas('${col_}')`:`sortAnuncios('${col_}')`;
+    return `<th onclick="${fn}" style="padding:10px 14px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:${active?"var(--text)":"var(--hint)"};cursor:pointer;user-select:none;border-bottom:1px solid var(--border);white-space:nowrap">${lbl}<span style="color:${active?"#60a5fa":"var(--hint)"};font-size:9px;margin-left:3px">${arrow}</span></th>`;
   }
 
+  // ── 6. Render ────────────────────────────────────────────────────────────
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
-        <div class="hdr-title">Anúncios</div>
-        <div class="hdr-sub">atualizado em: ${D().updated||"—"} · ${sorted.length} anúncios</div>
+        <div class="hdr-title">Campanhas / Anúncios</div>
+        <div class="hdr-sub">atualizado em: ${dd.updated||"—"} · ${sortedCamps.length} campanhas · ${sorted.length} anúncios${hasFilter?" · filtrando "+S.selectedCamps.size+" campanha"+(S.selectedCamps.size>1?"s":""):""}</div>
       </div>
       <div>${statusLegend()}</div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
 
-    <div class="section-lbl">Resumo do período</div>
+    <div class="section-lbl">Resumo do período${hasFilter?" · campanhas selecionadas":""}</div>
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:13px;margin-bottom:20px">
       <div class="kc"><div class="kc-lbl">Investimento</div><div class="kc-val" style="font-size:18px">${fBRL(tot.spend)}</div></div>
       <div class="kc"><div class="kc-lbl">Vendas</div><div class="kc-val" style="font-size:18px">${tot.qtd}</div></div>
@@ -1406,25 +1449,77 @@ function renderAnuncios(){
       <div class="kc" style="border-color:${statusBorder(totCpm,METAS_T.cpm.val,false)}"><div class="kc-lbl">CPM</div><div class="kc-val" style="color:${sc(totCpm,METAS_T.cpm.val,false)};font-size:18px">${fBRL(totCpm)}</div><div class="kc-sub">meta ${fBRL(METAS_T.cpm.val)}</div></div>
     </div>
 
-    <div class="section-lbl">Anúncios com investimento no período</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span class="section-lbl" style="margin:0">Campanhas</span>
+      ${hasFilter?`<button onclick="clearCamps()" style="font-size:10px;padding:3px 10px;border-radius:6px;background:rgba(59,130,246,.18);border:1px solid rgba(96,165,250,.35);color:#93c5fd;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.selectedCamps.size})</button>`:""}
+      <span style="font-size:10px;color:var(--hint)">Clique para filtrar anúncios por campanha</span>
+    </div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px">
       <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr>
-            <th style="padding:10px 14px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border)">Anúncio</th>
-            ${thRow("spend","Investimento")}
-            ${thRow("qtd","Vendas")}
-            ${thRow("cpv","Custo/Venda")}
-            ${thRow("ticket","Ticket Médio Front")}
-            ${thRow("ticketAsc","Ticket Médio Ascensões")}
-            ${thRow("ctr","CTR")}
-            ${thRow("cpm","CPM")}
-            ${thRow("cpc","CPC")}
-            <th style="padding:10px 12px;border-bottom:1px solid var(--border)"></th>
-          </tr>
-        </thead>
+        <thead><tr>
+          <th style="padding:10px 14px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border)">Campanha</th>
+          ${thC("spend","Investimento","camp")}
+          ${thC("qtd","Vendas","camp")}
+          ${thC("cpv","Custo/Venda","camp")}
+          ${thC("roas","ROAS","camp")}
+          ${thC("ticket","Ticket Médio","camp")}
+          ${thC("ctr","CTR","camp")}
+          ${thC("cpm","CPM","camp")}
+          ${thC("cpc","CPC","camp")}
+        </tr></thead>
         <tbody>
-          ${sorted.map((r,i)=>`
+          ${sortedCamps.map(r=>{
+            const sel=S.selectedCamps.has(r.campName);
+            const bg=sel?"rgba(59,130,246,.12)":"transparent";
+            const bord=sel?"border-left:3px solid #3b82f6":"border-left:3px solid transparent";
+            const safeN=r.campName.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
+            return `<tr data-camp="${safeN}" style="border-bottom:1px solid var(--border);background:${bg};${bord};cursor:pointer;transition:background .1s"
+              onclick="toggleCamp(this.dataset.camp)"
+              onmouseover="this.style.background='${sel?"rgba(59,130,246,.18)":"rgba(255,255,255,.025)"}'"
+              onmouseout="this.style.background='${bg}'">
+              <td style="padding:10px 14px;text-align:left;max-width:300px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:14px;height:14px;border-radius:3px;border:1.5px solid ${sel?"#3b82f6":"var(--border-h)"};background:${sel?"#3b82f6":"transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                    ${sel?`<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`:""}
+                  </div>
+                  <span style="font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.campName}">${r.campName}</span>
+                </div>
+              </td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${fBRL(r.spend)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpv,META_CPV,false)}">${r.qtd>0?fBRL(r.cpv):"—"}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${r.qtd>0?sc(r.roas,META_ROAS,true):"var(--hint)"}">${r.qtd>0?r.roas.toFixed(2)+"x":"—"}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd>0?fBRL(r.ticket):"—"}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ctr,METAS_T.ctr.val,true)}">${fPct(r.ctr)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpm,METAS_T.cpm.val,false)}">${fBRL(r.cpm)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpc,METAS_T.cpc.val,false)}">${fBRL(r.cpc)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span class="section-lbl" style="margin:0">Anúncios</span>
+      ${hasFilter?`<span style="font-size:10px;color:#93c5fd;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.3);padding:2px 8px;border-radius:5px">${[...S.selectedCamps].join(", ").substring(0,80)}${([...S.selectedCamps].join(", ").length>80?"…":"")}</span>`:""}
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr>
+          <th style="padding:10px 14px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border)">Anúncio</th>
+          ${thC("spend","Investimento","ad")}
+          ${thC("qtd","Vendas","ad")}
+          ${thC("cpv","Custo/Venda","ad")}
+          ${thC("ticket","Ticket Médio Front","ad")}
+          ${thC("ticketAsc","Ticket Médio Ascensões","ad")}
+          ${thC("ctr","CTR","ad")}
+          ${thC("cpm","CPM","ad")}
+          ${thC("cpc","CPC","ad")}
+          <th style="padding:10px 12px;border-bottom:1px solid var(--border)"></th>
+        </tr></thead>
+        <tbody>
+          ${sorted.length===0?`<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--hint);font-size:12px">Nenhum anúncio encontrado para as campanhas selecionadas</td></tr>`:""}
+          ${sorted.map(r=>`
           <tr style="border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,.025)'" onmouseout="this.style.background='transparent'">
             <td style="padding:10px 14px;text-align:left">
               <span style="background:var(--surf);border:1px solid var(--border-h);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace">${r.advCode}</span>
@@ -1444,7 +1539,7 @@ function renderAnuncios(){
         </tbody>
       </table>
     </div>
-    <p class="foot">Base Meta (Stract) + Base Vendas (Eduzz) · Google Sheets API v4</p>`;
+    <p class="foot">Base Meta (Stract) + Base Vendas (Hotmart) · Google Sheets API v4</p>`;
 }
 
 
@@ -1885,136 +1980,6 @@ function renderFunil(){
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
-// ── Render Campanhas ───────────────────────────────────────────────────────
-function renderCampanhas(){
-  const el=document.getElementById("page-campanhas");if(!el)return;
-  const dd=D();
-  const start=S.startDate, end=S.endDate;
-
-  // Constrói linhas de campanha
-  const rows=[];
-  for(const [campName,meta] of Object.entries(dd.metaByCamp)){
-    const byDate=dd.metaByCampByDate[campName]||{};
-    let spend=0,clicks=0,impressions=0;
-    const adIdsInPeriod=new Set();
-    for(const [d,vals] of Object.entries(byDate)){
-      if(d>=start&&d<=end){
-        spend+=vals.spend; clicks+=vals.clicks; impressions+=vals.impressions;
-        vals.adIds.forEach(id=>adIdsInPeriod.add(id));
-      }
-    }
-    if(spend===0) continue;
-    // Vendas atribuídas pelos Ad IDs da campanha
-    let qtd=0,valor=0;
-    for(const adId of adIdsInPeriod){
-      const byD=dd.vendasByAdDate[adId]||{};
-      for(const [vd,vv] of Object.entries(byD)){
-        if(vd>=start&&vd<=end){qtd+=vv.qtd;valor+=vv.valor;}
-      }
-    }
-    const cpc=clicks>0?spend/clicks:0;
-    const ctr=impressions>0?(clicks/impressions)*100:0;
-    const cpm=impressions>0?(spend/impressions)*1000:0;
-    const cpv=qtd>0?spend/qtd:0;
-    const roas=spend>0?valor/spend:0;
-    const ticket=qtd>0?valor/qtd:0;
-    rows.push({campName,spend,clicks,impressions,qtd,valor,cpc,ctr,cpm,cpv,roas,ticket});
-  }
-
-  // Totais
-  const tot=rows.reduce((a,r)=>({spend:a.spend+r.spend,clicks:a.clicks+r.clicks,
-    impressions:a.impressions+r.impressions,qtd:a.qtd+r.qtd,valor:a.valor+r.valor}),
-    {spend:0,clicks:0,impressions:0,qtd:0,valor:0});
-  const totCpc=tot.clicks>0?tot.spend/tot.clicks:0;
-  const totCtr=tot.impressions>0?(tot.clicks/tot.impressions)*100:0;
-  const totCpm=tot.impressions>0?(tot.spend/tot.impressions)*1000:0;
-  const totCpv=tot.qtd>0?tot.spend/tot.qtd:0;
-  const totRoas=tot.spend>0?tot.valor/tot.spend:0;
-  const totTicket=tot.qtd>0?tot.valor/tot.qtd:0;
-
-  // Ordenação
-  const {col,dir}=S.cSort;
-  const sorted=[...rows].sort((a,b)=>{
-    const av=a[col]??0,bv=b[col]??0;
-    if(typeof av==="string") return dir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
-    return dir==="asc"?av-bv:bv-av;
-  });
-
-  function thC(c,lbl){
-    const active=col===c;
-    const arrow=active?(dir==="asc"?" ↑":" ↓"):" ↕";
-    return `<th onclick="sortCampanhas('${c}')" style="padding:10px 14px;text-align:right;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:${active?"var(--text)":"var(--hint)"};cursor:pointer;user-select:none;border-bottom:1px solid var(--border);white-space:nowrap">${lbl}<span style="color:${active?"#60a5fa":"var(--hint)"};font-size:9px;margin-left:3px">${arrow}</span></th>`;
-  }
-  function sc(v,meta,hi){return statusColor(v,meta,hi);}
-
-  el.innerHTML=`
-    <div class="hdr" style="margin-bottom:6px">
-      <div>
-        <div class="hdr-title">Campanhas</div>
-        <div class="hdr-sub">atualizado em: ${dd.updated||"—"} · ${sorted.length} campanhas</div>
-      </div>
-      <div>${statusLegend()}</div>
-    </div>
-    ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
-
-    <div class="section-lbl">Resumo do período</div>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:13px;margin-bottom:20px">
-      <div class="kc"><div class="kc-lbl">Investimento</div><div class="kc-val" style="font-size:18px">${fBRL(tot.spend)}</div></div>
-      <div class="kc"><div class="kc-lbl">Vendas</div><div class="kc-val" style="font-size:18px">${tot.qtd}</div></div>
-      <div class="kc" style="border-color:${statusBorder(totCpv,META_CPV,false)}"><div class="kc-lbl">Custo por Venda</div><div class="kc-val" style="color:${sc(totCpv,META_CPV,false)};font-size:18px">${fBRL(totCpv)}</div><div class="kc-sub">meta ${fBRL(META_CPV)}</div></div>
-      <div class="kc"><div class="kc-lbl">Ticket Médio</div><div class="kc-val" style="font-size:18px">${fBRL(totTicket)}</div></div>
-      <div class="kc" style="border-color:${statusBorder(totRoas,META_ROAS,true)}"><div class="kc-lbl">ROAS</div><div class="kc-val" style="color:${sc(totRoas,META_ROAS,true)};font-size:18px">${totRoas.toFixed(2)}x</div><div class="kc-sub">meta ${META_ROAS}x</div></div>
-      <div class="kc" style="border-color:${statusBorder(totCtr,METAS_T.ctr.val,true)}"><div class="kc-lbl">CTR</div><div class="kc-val" style="color:${sc(totCtr,METAS_T.ctr.val,true)};font-size:18px">${fPct(totCtr)}</div><div class="kc-sub">meta ${fPct(METAS_T.ctr.val)}</div></div>
-      <div class="kc" style="border-color:${statusBorder(totCpm,METAS_T.cpm.val,false)}"><div class="kc-lbl">CPM</div><div class="kc-val" style="color:${sc(totCpm,METAS_T.cpm.val,false)};font-size:18px">${fBRL(totCpm)}</div><div class="kc-sub">meta ${fBRL(METAS_T.cpm.val)}</div></div>
-    </div>
-
-    <div class="section-lbl">Campanhas com investimento no período</div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr>
-            <th style="padding:10px 14px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border)">Campanha</th>
-            ${thC("spend","Investimento")}
-            ${thC("qtd","Vendas")}
-            ${thC("cpv","Custo/Venda")}
-            ${thC("roas","ROAS")}
-            ${thC("ticket","Ticket Médio")}
-            ${thC("ctr","CTR")}
-            ${thC("cpm","CPM")}
-            ${thC("cpc","CPC")}
-          </tr>
-        </thead>
-        <tbody>
-          ${sorted.map(r=>`
-          <tr style="border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,.025)'" onmouseout="this.style.background='transparent'">
-            <td style="padding:10px 14px;text-align:left;max-width:280px">
-              <span style="display:block;font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.campName}">${r.campName}</span>
-            </td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${fBRL(r.spend)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpv,META_CPV,false)}">${r.qtd>0?fBRL(r.cpv):"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${r.qtd>0?sc(r.roas,META_ROAS,true):"var(--hint)"}">${r.qtd>0?r.roas.toFixed(2)+"x":"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd>0?fBRL(r.ticket):"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ctr,METAS_T.ctr.val,true)}">${fPct(r.ctr)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpm,METAS_T.cpm.val,false)}">${fBRL(r.cpm)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpc,METAS_T.cpc.val,false)}">${fBRL(r.cpc)}</td>
-          </tr>`).join("")}
-          <tr style="background:rgba(255,255,255,.04);font-weight:700">
-            <td style="padding:10px 14px;font-size:10px;color:var(--hint);border-top:1px solid var(--border)">TOTAL</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${fBRL(tot.spend)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${tot.qtd}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${tot.qtd>0?fBRL(totCpv):"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${tot.qtd>0?totRoas.toFixed(2)+"x":"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${tot.qtd>0?fBRL(totTicket):"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${fPct(totCtr)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${fBRL(totCpm)}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;border-top:1px solid var(--border)">${fBRL(totCpc)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="foot">Base Meta (Stract) · campanhas com investimento no período selecionado</p>`;
-}
 
 function render(){
   renderHeader();
@@ -2039,7 +2004,6 @@ function render(){
   else if(S.currentPage==="trafego") renderTrafego();
   else if(S.currentPage==="anuncios") renderAnuncios();
   else if(S.currentPage==="funil") renderFunil();
-  else if(S.currentPage==="campanhas") renderCampanhas();
 
 }
 
