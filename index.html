@@ -136,6 +136,108 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 .ana-tab{padding:7px 14px;font-size:11px;font-weight:500;color:var(--hint);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .12s}
 .ana-tab:hover{color:var(--text)}
 .ana-tab.active{color:#60a5fa;border-bottom-color:#3b82f6}
+
+/* ─── Mobile Responsive ────────────────────────────────────────── */
+@media(max-width:768px){
+  /* ── Header ── */
+  .app-hdr{
+    height:auto;flex-wrap:wrap;
+    padding:0;gap:0;align-items:stretch;
+  }
+  .funil-wrap{
+    padding:9px 14px;flex-shrink:0;
+    border-bottom:1px solid var(--border);
+    width:auto;
+  }
+  .hdr-right{
+    order:2;flex:1;min-width:0;
+    display:flex;align-items:center;gap:6px;
+    overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+    padding:8px 14px 8px 8px;flex-wrap:nowrap;
+    border-bottom:1px solid var(--border);
+  }
+  .hdr-right::-webkit-scrollbar{display:none}
+  .presets{flex-wrap:nowrap;gap:3px}
+  .btn-pre{font-size:10px;padding:4px 8px;flex-shrink:0}
+  .drbox{flex-shrink:0}
+  .drbox input[type=date]{width:86px;font-size:10px}
+  .btn-update{font-size:11px;padding:5px 10px;flex-shrink:0}
+  .hdr-tabs{
+    order:3;width:100%;
+    overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+    flex-wrap:nowrap;gap:2px;
+    padding:6px 14px 8px;
+  }
+  .hdr-tabs::-webkit-scrollbar{display:none}
+  .htab{flex-shrink:0;font-size:11px;padding:5px 10px}
+  .htab-icon{font-size:12px}
+
+  /* ── Content ── */
+  .app-content{padding:14px 10px 30px;max-width:100%}
+  .hdr{flex-direction:column;gap:6px;margin-bottom:14px}
+  .hdr-title{font-size:18px}
+
+  /* ── KPI Grids ── */
+  .g3,.g4,.g5{
+    grid-template-columns:repeat(2,1fr)!important;
+    gap:8px!important;
+  }
+  .kc{padding:12px 13px}
+  .kc-val{font-size:18px}
+  .kc-val-sm{font-size:15px}
+
+  /* ── Inline repeat grids (render functions) ── */
+  [style*="repeat(3,1fr)"],[style*="repeat(4,1fr)"],
+  [style*="repeat(5,1fr)"],[style*="repeat(6,1fr)"],
+  [style*="repeat(7,1fr)"],[style*="repeat(8,1fr)"]{
+    grid-template-columns:repeat(2,1fr)!important;
+    gap:8px!important;
+  }
+  /* 2-column side-by-side layouts → single column */
+  [style*="1fr 1fr"]{grid-template-columns:1fr!important}
+  /* Funil SVG + cards sidebar → stack */
+  [style*="1fr 260px"]{grid-template-columns:1fr!important}
+  /* Resumo diário 2-col → stack */
+  [style*="220px 1fr"]{grid-template-columns:1fr!important}
+
+  /* ── Charts ── */
+  .charts-2x2,.charts-2x3{
+    grid-template-columns:1fr!important;
+    gap:10px!important;
+  }
+
+  /* ── Tables: allow horizontal scroll ── */
+  .page div[style*="overflow:hidden"]{
+    overflow-x:auto!important;
+    -webkit-overflow-scrolling:touch;
+  }
+  .page table{font-size:10px!important}
+  .page td,.page th{
+    padding:7px 8px!important;
+    white-space:nowrap;
+  }
+  /* First column (names/labels) can wrap */
+  .page td:first-child,.page th:first-child{
+    white-space:normal;
+    min-width:90px;max-width:140px;
+  }
+
+  /* ── Status legend ── */
+  .status-legend{flex-wrap:wrap;gap:8px}
+
+  /* ── Period quick buttons ── */
+  .period-quick{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+  .period-quick::-webkit-scrollbar{display:none}
+  .btn-q{flex-shrink:0;font-size:10px;padding:3px 9px}
+
+  /* ── Ana sub-tabs ── */
+  .ana-tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-wrap:nowrap}
+  .ana-tabs::-webkit-scrollbar{display:none}
+  .ana-tab{flex-shrink:0;font-size:10px;padding:6px 10px}
+
+  /* ── Section label spacing ── */
+  .section-lbl{margin-top:16px}
+}
 </style>
 </head>
 <body>
