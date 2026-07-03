@@ -349,8 +349,9 @@ const CHART_CPV   = "#fbbf24";
 const S = {
   // ── Dados Reto ──
   meta:{}, vendas:{},
-  metaByAd:{}, metaByAdByDate:{},
-  metaByCamp:{}, metaByCampByDate:{},
+  metaByAd:{}, metaByAdByDate:{}, metaByAdId:{},
+  metaByCamp:{}, metaByCampByDate:{}, metaByCountry:{},
+  selectedCountry:"todos",
   vendasByAd:{}, vendasByAdDate:{},
   funilRows:[], funil:{}, updated:null,
   loading:true, error:null, firstLoad:true,
@@ -519,6 +520,21 @@ function extractAdvCode(name){
   const clean=name.replace(/^teste-/i,"");
   const m=clean.match(/ad[vic]\d+/i);
   return m ? m[0].toLowerCase() : null;
+}
+
+// Extrai país do Adset Name.
+// Convenção: "ca01-aberto-{pais}" → país; caso contrário → "México"
+function extractCountryFromAdset(adsetName){
+  if(!adsetName) return "México";
+  // Padrão ca{N}-{word}-{country}, captura o último segmento após o segundo "-"
+  const m=adsetName.match(/^ca\d+-.+-([a-z_]+)$/i);
+  if(m){
+    const slug=m[1].replace(/_/g," ");
+    if(slug.toUpperCase()==="EUA") return "EUA";
+    // Title-case cada palavra
+    return slug.replace(/\b\w/g,c=>c.toUpperCase());
+  }
+  return "México";
 }
 
 // Extrai Ad ID numérico de 15-20 dígitos de uma string que pode ser:
@@ -739,7 +755,7 @@ async function loadData(force=false){
 
   try{
     // ── Meta ──────────────────────────────────────────────────────────────
-    const mD={}, mByAd={}, mByAdByDate={}, mByCamp={}, mByCampByDate={};
+    const mD={}, mByAd={}, mByAdByDate={}, mByCamp={}, mByCampByDate={}, mByAdId={}, mByCountry={};
     for(const r of parseSheet(mj)){
       const d=toISO(r["Date"]);if(!d)continue;
       if(!mD[d])mD[d]={spend:0,clicks:0,impressions:0,landingViews:0,checkouts:0,purchases:0};
@@ -753,6 +769,8 @@ async function loadData(force=false){
       const adName=r["Ad Name"]||"";
       const igUrl=r["Instagram Permalink URL"]||"";
       const campName=r["Campaign Name"]||"—";
+      const adsetName=r["Adset Name"]||"";
+      const country=extractCountryFromAdset(adsetName);
       const spendV=parseBRL(r["Spend (Cost, Amount Spent)"]);
       const clicksV=parseInt(r["Action Link Clicks"]||0)||0;
       const impressV=parseInt(r["Impressions"]||0)||0;
@@ -773,6 +791,23 @@ async function loadData(force=false){
         if(adId) mByAdByDate[advCode][d].adIds.add(adId);
         if(igUrl && !mByAdByDate[advCode][d].igUrl) mByAdByDate[advCode][d].igUrl=igUrl;
       }
+      // Índice por adId (granularidade máxima — permite filtrar por campanha/país depois)
+      if(adId && advCode){
+        if(!mByAdId[adId]) mByAdId[adId]={adId,advCode,campName,country,byDate:{}};
+        if(!mByAdId[adId].byDate[d]) mByAdId[adId].byDate[d]={spend:0,clicks:0,impressions:0,igUrl:""};
+        mByAdId[adId].byDate[d].spend       += spendV;
+        mByAdId[adId].byDate[d].clicks      += clicksV;
+        mByAdId[adId].byDate[d].impressions += impressV;
+        if(igUrl && !mByAdId[adId].byDate[d].igUrl) mByAdId[adId].byDate[d].igUrl=igUrl;
+      }
+      // Agrupa por país (derivado do adset name)
+      if(adId){
+        if(!mByCountry[country]) mByCountry[country]={country,adIds:new Set(),spend:0,clicks:0,impressions:0};
+        mByCountry[country].spend       += spendV;
+        mByCountry[country].clicks      += clicksV;
+        mByCountry[country].impressions += impressV;
+        mByCountry[country].adIds.add(adId);
+      }
       // Agrupa por campanha
       if(campName&&campName!=="—"){
         if(!mByCamp[campName])mByCamp[campName]={campName,adIds:new Set(),spend:0,clicks:0,impressions:0};
@@ -790,6 +825,7 @@ async function loadData(force=false){
     }
     S.meta=mD; S.metaByAd=mByAd; S.metaByAdByDate=mByAdByDate;
     S.metaByCamp=mByCamp; S.metaByCampByDate=mByCampByDate;
+    S.metaByAdId=mByAdId; S.metaByCountry=mByCountry;
 
     // ── Vendas Reto ────────────────────────────────────────────────────────
     const retoRows=parseHotmartRows(retoJ);
@@ -957,6 +993,10 @@ function toggleCamp(name){
 }
 function clearCamps(){
   S.selectedCamps.clear();
+  renderAnuncios();
+}
+function selectCountry(c){
+  S.selectedCountry=c;
   renderAnuncios();
 }
 function sortAnuncios(col){
@@ -1411,28 +1451,75 @@ function renderAnuncios(){
     buyerTotalSpent.set(key,(buyerTotalSpent.get(key)||0)+(parseFloat(r["Valor do produto"])||0));
   }
 
-  // ── 1. Constrói linhas de campanha ──────────────────────────────────────
+  // ── 1a. País selecionado → countryAllowedIds (deve ser calculado antes de campRows)
+  const hasCountryFilter=S.selectedCountry!=="todos";
+  let countryAllowedIds=null;
+  if(hasCountryFilter){
+    const cEntry=dd.metaByCountry[S.selectedCountry];
+    countryAllowedIds=cEntry?new Set([...cEntry.adIds]):new Set();
+  }
+
+  // ── 1b. Métricas por país (período filtrado) para a tabela de países ────
+  const countryStats={};
+  const countryBuyerSets={};
+  for(const [adId,adData] of Object.entries(dd.metaByAdId)){
+    const country=adData.country;
+    if(!countryStats[country]) countryStats[country]={spend:0,clicks:0,impressions:0,qtd:0,funilRev:0};
+    for(const [d,vals] of Object.entries(adData.byDate)){
+      if(d>=start&&d<=end){
+        countryStats[country].spend+=vals.spend;
+        countryStats[country].clicks+=vals.clicks;
+        countryStats[country].impressions+=vals.impressions;
+      }
+    }
+    const vByD=dd.vendasByAdDate[adId]||{};
+    for(const [vd,vv] of Object.entries(vByD)){
+      if(vd>=start&&vd<=end) countryStats[country].qtd+=vv.qtd;
+    }
+    if(!countryBuyerSets[country]) countryBuyerSets[country]=new Set();
+    for(const ek of (adBuyersMap.get(adId)||new Set())) countryBuyerSets[country].add(ek);
+  }
+  for(const [country,keys] of Object.entries(countryBuyerSets)){
+    if(!countryStats[country]) countryStats[country]={spend:0,clicks:0,impressions:0,qtd:0,funilRev:0};
+    for(const ek of keys) countryStats[country].funilRev+=(buyerTotalSpent.get(ek)||0);
+  }
+
+  // ── 1c. Constrói linhas de campanha (filtradas por país quando necessário)
   const campRows=[];
   for(const [campName,meta] of Object.entries(dd.metaByCamp)){
     const byDate=dd.metaByCampByDate[campName]||{};
-    let cSpend=0,cClicks=0,cImpr=0;
-    const adIdsC=new Set();
+    // Coleta adIds do período
+    const adIdsPeriod=new Set();
     for(const [d,vals] of Object.entries(byDate)){
-      if(d>=start&&d<=end){
-        cSpend+=vals.spend;cClicks+=vals.clicks;cImpr+=vals.impressions;
-        vals.adIds.forEach(id=>adIdsC.add(id));
+      if(d>=start&&d<=end) vals.adIds.forEach(id=>adIdsPeriod.add(id));
+    }
+    // Filtra por país se necessário
+    const adIdsC=countryAllowedIds
+      ? new Set([...adIdsPeriod].filter(id=>countryAllowedIds.has(id)))
+      : adIdsPeriod;
+    if(adIdsC.size===0) continue;
+    // Spend/clicks/impressions — recalcula por adId quando país filtrado
+    let cSpend=0,cClicks=0,cImpr=0;
+    if(countryAllowedIds){
+      for(const adId of adIdsC){
+        const adData=dd.metaByAdId[adId];if(!adData)continue;
+        for(const [d,vals] of Object.entries(adData.byDate)){
+          if(d>=start&&d<=end){cSpend+=vals.spend;cClicks+=vals.clicks;cImpr+=vals.impressions;}
+        }
+      }
+    } else {
+      for(const [d,vals] of Object.entries(byDate)){
+        if(d>=start&&d<=end){cSpend+=vals.spend;cClicks+=vals.clicks;cImpr+=vals.impressions;}
       }
     }
     if(cSpend===0) continue;
-    // Vendas Reto diretas (para qtd e CPV)
-    let cQtd=0,cVal=0;
+    let cQtd=0;
     for(const adId of adIdsC){
       const byD=dd.vendasByAdDate[adId]||{};
       for(const [vd,vv] of Object.entries(byD)){
-        if(vd>=start&&vd<=end){cQtd+=vv.qtd;cVal+=vv.valor;}
+        if(vd>=start&&vd<=end) cQtd+=vv.qtd;
       }
     }
-    // Receita funil (Reto + Cero + Mapa) via adBuyersMap + buyerTotalSpent
     const campEvKeys=new Set();
     for(const adId of adIdsC){
       for(const ek of (adBuyersMap.get(adId)||new Set())) campEvKeys.add(ek);
@@ -1456,7 +1543,7 @@ function renderAnuncios(){
     return cDir==="asc"?av-bv:bv-av;
   });
 
-  // ── 2. Determina adIds permitidos pelo filtro de campanhas ───────────────
+  // ── 2. allowedAdIds: campRows já está filtrado por país, então a interseção é automática
   const hasFilter=S.selectedCamps.size>0;
   let allowedAdIds=null;
   if(hasFilter){
@@ -1464,6 +1551,9 @@ function renderAnuncios(){
     for(const c of campRows){
       if(S.selectedCamps.has(c.campName)) c.adIds.forEach(id=>allowedAdIds.add(id));
     }
+    // campRows.adIds já foram intersectados com countryAllowedIds, não precisa reintersectar
+  } else if(countryAllowedIds){
+    allowedAdIds=countryAllowedIds;
   }
 
   // ── 3. Constrói linhas de anúncios ──────────────────────────────────────
@@ -1471,24 +1561,46 @@ function renderAnuncios(){
     const rows=[];
     for(const [advCode,meta] of Object.entries(dd.metaByAd)){
       const byDate=dd.metaByAdByDate[advCode]||{};
-      let spend=0,clicks=0,impressions=0,igUrl="";
+
+      // Coleta todos os adIds deste advCode dentro do período
       const adIdsInPeriod=new Set();
       for(const [d,vals] of Object.entries(byDate)){
-        if(d>=start&&d<=end){
-          spend+=vals.spend;clicks+=vals.clicks;impressions+=vals.impressions;
-          vals.adIds.forEach(id=>adIdsInPeriod.add(id));
-          if(!igUrl&&vals.igUrl) igUrl=vals.igUrl;
+        if(d>=start&&d<=end) vals.adIds.forEach(id=>adIdsInPeriod.add(id));
+      }
+      const allIds=adIdsInPeriod.size>0?adIdsInPeriod:meta.adIds;
+
+      // Quando há filtro de campanha, restringe aos adIds permitidos
+      const useIds=allowedAdIds
+        ? new Set([...allIds].filter(id=>allowedAdIds.has(id)))
+        : allIds;
+      if(useIds.size===0) continue;
+
+      // Spend / clicks / impressions — calculado a partir dos adIds filtrados
+      let spend=0,clicks=0,impressions=0,igUrl="";
+      if(allowedAdIds){
+        // Usa metaByAdId para precisão por campanha
+        for(const adId of useIds){
+          const adData=dd.metaByAdId[adId];if(!adData)continue;
+          for(const [d,vals] of Object.entries(adData.byDate)){
+            if(d>=start&&d<=end){
+              spend+=vals.spend;clicks+=vals.clicks;impressions+=vals.impressions;
+              if(!igUrl&&vals.igUrl) igUrl=vals.igUrl;
+            }
+          }
+        }
+      } else {
+        // Sem filtro: usa o agregado por advCode (mais eficiente)
+        for(const [d,vals] of Object.entries(byDate)){
+          if(d>=start&&d<=end){
+            spend+=vals.spend;clicks+=vals.clicks;impressions+=vals.impressions;
+            if(!igUrl&&vals.igUrl) igUrl=vals.igUrl;
+          }
         }
       }
       if(spend===0) continue;
-      // Filtrar por campainha selecionada
-      if(allowedAdIds){
-        const useIds=adIdsInPeriod.size>0?adIdsInPeriod:meta.adIds;
-        const intersects=[...useIds].some(id=>allowedAdIds.has(id));
-        if(!intersects) continue;
-      }
+
+      // Vendas (já são por adId — basta filtrar pelos adIds certos)
       let qtd=0,valor=0,taxa=0;
-      const useIds=adIdsInPeriod.size>0?adIdsInPeriod:meta.adIds;
       for(const adId of useIds){
         const byD=dd.vendasByAdDate[adId]||{};
         for(const [vd,vvals] of Object.entries(byD)){
@@ -1496,6 +1608,8 @@ function renderAnuncios(){
         }
       }
       if(!igUrl) igUrl=meta.igUrl;
+
+      // Ticket ascensão (funil completo, sem filtro de data)
       let totalAscensoes=0;
       for(const adId of useIds){
         for(const eventKey of (adBuyersMap.get(adId)||new Set())){
@@ -1598,6 +1712,82 @@ function renderAnuncios(){
       <div class="kc" style="border-color:${statusBorder(totCtr,METAS_T.ctr.val,true)}"><div class="kc-lbl">CTR</div><div class="kc-val" style="color:${sc(totCtr,METAS_T.ctr.val,true)};font-size:18px">${fPct(totCtr)}</div><div class="kc-sub">meta ${fPct(METAS_T.ctr.val)}</div></div>
       <div class="kc" style="border-color:${statusBorder(totCpm,METAS_T.cpm.val,false)}"><div class="kc-lbl">CPM</div><div class="kc-val" style="color:${sc(totCpm,METAS_T.cpm.val,false)};font-size:18px">${fBRL(totCpm)}</div><div class="kc-sub">meta ${fBRL(METAS_T.cpm.val)}</div></div>
     </div>
+
+    ${(()=>{
+      // Tabela de países — dinâmica, derivada dos adsets do Meta CSV
+      const countries=Object.keys(countryStats).sort((a,b)=>{
+        if(a==="México") return -1; if(b==="México") return 1;
+        return a.localeCompare(b);
+      });
+      if(countries.length<=1) return "";
+      const flagMap={
+        "México":"🇲🇽","Argentina":"🇦🇷","Chile":"🇨🇱","Colombia":"🇨🇴",
+        "Costa Rica":"🇨🇷","El Salvador":"🇸🇻","Equador":"🇪🇨","EUA":"🇺🇸",
+        "Guatemala":"🇬🇹","Peru":"🇵🇪","Brasil":"🇧🇷","Portugal":"🇵🇹",
+        "China":"🇨🇳","Espanha":"🇪🇸","Bolívia":"🇧🇴","Paraguai":"🇵🇾",
+        "Uruguai":"🇺🇾","Venezuela":"🇻🇪","Panamá":"🇵🇦","Honduras":"🇭🇳",
+        "Nicarágua":"🇳🇮","Cuba":"🇨🇺","República Dominicana":"🇩🇴",
+      };
+      // Linha "Todos" agrega todos os países
+      const totRow={spend:0,clicks:0,impressions:0,qtd:0,funilRev:0};
+      for(const s of Object.values(countryStats)){
+        totRow.spend+=s.spend;totRow.clicks+=s.clicks;
+        totRow.impressions+=s.impressions;totRow.qtd+=s.qtd;totRow.funilRev+=s.funilRev;
+      }
+      function cpRow(c,s,isTodos){
+        const sel=!isTodos&&S.selectedCountry===c;
+        const bg=sel?"rgba(251,191,36,.12)":"transparent";
+        const bord=sel?"border-left:3px solid #fbbf24":"border-left:3px solid transparent";
+        const label=isTodos?"🌎 Todos":(flagMap[c]||"🌐")+" "+c;
+        const cpc=s.clicks>0?s.spend/s.clicks:0;
+        const ctr=s.impressions>0?(s.clicks/s.impressions)*100:0;
+        const cpm=s.impressions>0?(s.spend/s.impressions)*1000:0;
+        const cpv=s.qtd>0?s.spend/s.qtd:0;
+        const roas=s.spend>0?s.funilRev/s.spend:0;
+        const ticket=s.qtd>0?s.funilRev/s.qtd:0;
+        const safeC=(isTodos?"todos":c).replace(/'/g,"\\'");
+        return `<tr data-country="${safeC}" style="border-bottom:1px solid var(--border);background:${bg};${bord};cursor:pointer;transition:background .1s"
+          onclick="selectCountry('${safeC}')"
+          onmouseover="this.style.background='${sel?"rgba(251,191,36,.18)":"rgba(255,255,255,.025)"}'"
+          onmouseout="this.style.background='${bg}'">
+          <td style="padding:9px 14px;font-size:11px;font-weight:${sel||isTodos?"700":"500"};color:${sel?"#fbbf24":isTodos?"var(--text-strong)":"var(--text)"};white-space:nowrap">${label}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${fBRL(s.spend)}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${s.qtd||"—"}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${s.qtd>0?sc(cpv,META_CPV,false):"var(--hint)"}">${s.qtd>0?fBRL(cpv):"—"}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${s.qtd>0?sc(roas,META_ROAS,true):"var(--hint)"}">${s.qtd>0?roas.toFixed(2)+"x":"—"}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${s.qtd>0?fBRL(ticket):"—"}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${sc(ctr,METAS_T.ctr.val,true)}">${fPct(ctr)}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${sc(cpm,METAS_T.cpm.val,false)}">${fBRL(cpm)}</td>
+          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${sc(cpc,METAS_T.cpc.val,false)}">${fBRL(cpc)}</td>
+        </tr>`;
+      }
+      const thStyle="padding:9px 14px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border);white-space:nowrap";
+      return `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span class="section-lbl" style="margin:0">País</span>
+        ${hasCountryFilter?`<span style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);padding:2px 8px;border-radius:5px">${S.selectedCountry}</span>`:""}
+        <span style="font-size:10px;color:var(--hint)">Clique para filtrar campanhas e anúncios por país</span>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr>
+            <th style="${thStyle};text-align:left">País</th>
+            <th style="${thStyle};text-align:right">Investimento</th>
+            <th style="${thStyle};text-align:right">Vendas</th>
+            <th style="${thStyle};text-align:right">Custo/Venda</th>
+            <th style="${thStyle};text-align:right">ROAS</th>
+            <th style="${thStyle};text-align:right">Ticket Médio</th>
+            <th style="${thStyle};text-align:right">CTR</th>
+            <th style="${thStyle};text-align:right">CPM</th>
+            <th style="${thStyle};text-align:right">CPC</th>
+          </tr></thead>
+          <tbody>
+            ${cpRow("todos",totRow,true)}
+            ${countries.map(c=>cpRow(c,countryStats[c]||{spend:0,clicks:0,impressions:0,qtd:0,funilRev:0},false)).join("")}
+          </tbody>
+        </table>
+      </div>`;
+    })()}
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <span class="section-lbl" style="margin:0">Campanhas</span>
