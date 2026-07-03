@@ -259,6 +259,7 @@ const S = {
   aSort:{col:"spend",dir:"desc"},
   cSort:{col:"spend",dir:"desc"},
   selectedCamps:new Set(),
+  selectedAds:new Set(),
   aTab:"tempo",
   anaStartDate:"", anaEndDate:"", anaActiveQuick:"all",
   anaTempoProd1:"reto", anaTempoProd2:"cero",
@@ -860,6 +861,23 @@ function sortAnuncios(col){
   if(S.aSort.col===col) S.aSort.dir=S.aSort.dir==="asc"?"desc":"asc";
   else {S.aSort.col=col;S.aSort.dir="desc";}
   renderAnuncios();
+}
+function toggleAd(code){
+  if(S.selectedAds.has(code)) S.selectedAds.delete(code);
+  else S.selectedAds.add(code);
+  renderAnuncios();
+}
+function clearSelectedAds(){
+  S.selectedAds.clear();
+  renderAnuncios();
+}
+function copyResumoAds(){
+  const el=document.getElementById("resumo-ads-pre");
+  if(!el||!el._text) return;
+  navigator.clipboard.writeText(el._text).then(()=>{
+    const btn=document.getElementById("copy-ads-btn");
+    if(btn){btn.textContent="✓ Copiado!";setTimeout(()=>{btn.textContent="📋 Copiar resumo";},2000);}
+  });
 }
 function toggleOverlay(key,which){
   S.overlays[key][which]=!S.overlays[key][which];
@@ -1532,10 +1550,13 @@ function renderAnuncios(){
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <span class="section-lbl" style="margin:0">Anúncios</span>
       ${hasFilter?`<span style="font-size:10px;color:#93c5fd;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.3);padding:2px 8px;border-radius:5px">${[...S.selectedCamps].join(", ").substring(0,80)}${([...S.selectedCamps].join(", ").length>80?"…":"")}</span>`:""}
+      ${S.selectedAds.size>0?`<button onclick="clearSelectedAds()" style="font-size:10px;padding:3px 10px;border-radius:6px;background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.35);color:#6ee7b7;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.selectedAds.size})</button>`:""}
+      <span style="font-size:10px;color:var(--hint)">Selecione anúncios para gerar resumo ↓</span>
     </div>
     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:20px">
       <table style="width:100%;border-collapse:collapse;font-size:11px">
         <thead><tr>
+          <th style="padding:10px 12px;border-bottom:1px solid var(--border);width:36px"></th>
           <th style="padding:10px 14px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--hint);border-bottom:1px solid var(--border)">Anúncio</th>
           ${thC("spend","Investimento","ad")}
           ${thC("qtd","Vendas","ad")}
@@ -1548,9 +1569,22 @@ function renderAnuncios(){
           <th style="padding:10px 12px;border-bottom:1px solid var(--border)"></th>
         </tr></thead>
         <tbody>
-          ${sorted.length===0?`<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--hint);font-size:12px">Nenhum anúncio encontrado para as campanhas selecionadas</td></tr>`:""}
-          ${sorted.map(r=>`
-          <tr style="border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='rgba(255,255,255,.025)'" onmouseout="this.style.background='transparent'">
+          ${sorted.length===0?`<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--hint);font-size:12px">Nenhum anúncio encontrado para as campanhas selecionadas</td></tr>`:""}
+          ${sorted.map(r=>{
+            const selAd=S.selectedAds.has(r.advCode);
+            const bgAd=selAd?"rgba(16,185,129,.10)":"transparent";
+            const bordAd=selAd?"border-left:3px solid #10b981":"border-left:3px solid transparent";
+            const safeAd=r.advCode.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
+            return `
+          <tr data-ad="${safeAd}" style="border-bottom:1px solid var(--border);background:${bgAd};${bordAd};cursor:pointer;transition:background .1s"
+            onclick="toggleAd(this.dataset.ad)"
+            onmouseover="if(!S.selectedAds.has(this.dataset.ad))this.style.background='rgba(255,255,255,.025)'"
+            onmouseout="this.style.background='${bgAd}'">
+            <td style="padding:10px 12px;text-align:center">
+              <div style="width:14px;height:14px;border-radius:3px;border:1.5px solid ${selAd?"#10b981":"var(--border-h)"};background:${selAd?"#10b981":"transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin:0 auto">
+                ${selAd?`<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`:""}
+              </div>
+            </td>
             <td style="padding:10px 14px;text-align:left">
               <span style="background:var(--surf);border:1px solid var(--border-h);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace">${r.advCode}</span>
             </td>
@@ -1562,13 +1596,50 @@ function renderAnuncios(){
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ctr,METAS_T.ctr.val,true)};font-weight:600">${fPct(r.ctr)}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpm,METAS_T.cpm.val,false)};font-weight:600">${fBRL(r.cpm)}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpc,METAS_T.cpc.val,false)};font-weight:600">${fBRL(r.cpc)}</td>
-            <td style="padding:8px 12px;text-align:center">
+            <td style="padding:8px 12px;text-align:center" onclick="event.stopPropagation()">
               ${r.igUrl?`<a href="${r.igUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:3px;background:var(--surf);border:1px solid var(--border-h);color:var(--muted);padding:4px 9px;border-radius:7px;font-size:10px;text-decoration:none;white-space:nowrap;font-weight:500">Ver ↗</a>`:"—"}
             </td>
-          </tr>`).join("")}
+          </tr>`;
+          }).join("")}
         </tbody>
       </table>
     </div>
+
+    ${(()=>{
+      if(!S.selectedAds.size) return "";
+      const fD=v=>fBRL(v).replace("R\$ ","$ ");
+      const fDM=iso=>{if(!iso)return"";const[y,m,d]=iso.split("-");return d+"/"+m;};
+      const selRows=[...adRows].filter(r=>S.selectedAds.has(r.advCode)).sort((a,b)=>b.qtd-a.qtd);
+      const hdr=`*Melhores ads - Finanzas con Proposito - Reto 14 dias*\n_${fDM(start)} a ${fDM(end)}_`;
+      const blocks=selRows.map(r=>{
+        const lines=["Nome do ad  ⤵️",r.advCode];
+        if(r.igUrl) lines.push(r.igUrl);
+        lines.push("Investimento:\t"+fD(r.spend));
+        lines.push("Vendas:\t"+r.qtd);
+        lines.push("Cust/ venda:\t"+fD(r.cpv));
+        lines.push("");
+        lines.push("CPC:\t"+fD(r.cpc));
+        lines.push("CPM:\t"+fD(r.cpm));
+        lines.push("CTR:\t"+fPct(r.ctr));
+        lines.push("—————————");
+        return lines.join("\n");
+      }).join("\n");
+      const txt=hdr+"\n\n"+blocks;
+      // Armazena para o botão copiar
+      setTimeout(()=>{const el=document.getElementById("resumo-ads-pre");if(el)el._text=txt;},0);
+      return `
+      <div style="background:var(--card);border:1px solid rgba(16,185,129,.3);border-radius:14px;padding:20px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div>
+            <div class="section-lbl" style="margin:0;color:#6ee7b7">Resumo de Anúncios</div>
+            <div style="font-size:10px;color:var(--hint);margin-top:2px">${selRows.length} ad(s) · ${fDM(start)} a ${fDM(end)}</div>
+          </div>
+          <button id="copy-ads-btn" onclick="copyResumoAds()" style="font-size:11px;font-weight:600;padding:7px 16px;border-radius:9px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.15);color:#6ee7b7;cursor:pointer;font-family:'DM Sans',sans-serif">📋 Copiar resumo</button>
+        </div>
+        <pre id="resumo-ads-pre" style="background:var(--surf);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.6;font-family:'JetBrains Mono',monospace;overflow-x:auto">${txt.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+      </div>`;
+    })()}
+
     <p class="foot">Base Meta (Stract) + Base Vendas (Hotmart) · Google Sheets API v4</p>`;
 }
 
