@@ -360,7 +360,17 @@ function addDays(iso,n){ const d=new Date(iso+"T12:00:00Z");d.setDate(d.getDate(
 function subDays(iso,n){ return addDays(iso,-n); }
 
 // ── Format helpers ────────────────────────────────────────────────────────
-function parseBRL(s){ if(!s||s==="-"||s==="0")return 0;return parseFloat(String(s).replace(/\./g,"").replace(",",".").trim())||0; }
+function parseBRL(s){
+  if(!s||s==="-"||s==="0")return 0;
+  s=String(s).replace(/[R$\s]/g,"").trim();
+  if(!s||s==="-")return 0;
+  // Both . and , → Brazilian thousands: 1.234,56
+  if(s.includes(",")&&s.includes("."))return parseFloat(s.replace(/\./g,"").replace(",","."))||0;
+  // Only , → Brazilian decimal: 2,68
+  if(s.includes(","))return parseFloat(s.replace(",","."))||0;
+  // Only . → US decimal: 2.68
+  return parseFloat(s)||0;
+}
 function fBRL(n){ return "R$ "+(n||0).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fBRLShort(n){ const a=Math.abs(n||0),sg=n<0?"-":"";if(a>=1000)return sg+"R$ "+(a/1000).toFixed(1).replace(".",",")+"k";return sg+"R$ "+Math.round(a); }
 function fPct(n){ return (n||0).toFixed(1)+"%"; }
@@ -550,7 +560,7 @@ async function loadData(force=false){
       const sp=parseBRL(r["Spend (Cost, Amount Spent)"]);
       const cl=parseInt(r["Action Link Clicks"]||0)||0;
       const im=parseInt(r["Impressions"]||0)||0;
-      const pv=parseInt(r["Instagram Profile Visits"]||0)||0;
+      const pv=parseInt(r["Instagram Profile Visits"]||r["Instagram Profile Visit"]||0)||0;
       const v3=parseInt(r["Action 3s Video Views"]||r["Action Video View"]||0)||0;
       const v15=parseInt(r["Video 15 Sec Watched Actions"]||0)||0;
       if(!dMeta[d])dMeta[d]={spend:0,clicks:0,impressions:0,profileVisits:0,video3s:0,video15s:0};
