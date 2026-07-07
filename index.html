@@ -1090,6 +1090,63 @@ function drawSegBar(id,data,cssW,cssH){
   data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,xP(i),P.t+cH+18);});
 }
 
+function drawDualCustoVisita(id,data,cssW,cssH){
+  const ctx=initCanvas(id,cssW,cssH);if(!ctx)return;
+  const P={t:14,r:58,b:28,l:64};
+  const cW=cssW-P.l-P.r,cH=cssH-P.t-P.b;
+  const lVals=data.map(d=>d.spend||0);
+  const rVals=data.map(d=>d.custoPorVisita||0);
+  const lMax=Math.max(...lVals,0.01)*1.15;
+  const rMax=Math.max(...rVals,0.01)*1.4;
+  const xP=i=>P.l+(data.length>1?i/(data.length-1):0.5)*cW;
+  const yPL=v=>P.t+cH-(v/lMax)*cH;
+  const yPR=v=>P.t+cH-(v/rMax)*cH;
+  ctx.setLineDash([]);
+  for(let i=0;i<=4;i++){
+    const y=P.t+(i/4)*cH;
+    ctx.strokeStyle=GRID_C;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+cW,y);ctx.stroke();
+    ctx.fillStyle=TICK_C;ctx.font="10px 'DM Mono',monospace";
+    ctx.textAlign="right";ctx.fillText(fBRLShort(lMax-(i/4)*lMax),P.l-5,y+3.5);
+    ctx.textAlign="left";ctx.fillText("R$"+(rMax-(i/4)*rMax).toFixed(0),P.l+cW+5,y+3.5);
+  }
+  drawLineArea(ctx,xP,yPL,lVals,CHART_INV,true);
+  drawLineArea(ctx,xP,yPR,rVals,CHART_CPL,false);
+  const step=data.length>60?7:data.length>30?3:data.length>14?2:1;
+  ctx.fillStyle=TICK_C;ctx.font="10px 'DM Mono',monospace";ctx.textAlign="center";ctx.setLineDash([]);
+  data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,xP(i),P.t+cH+18);});
+}
+function drawProfileBar(id,data,cssW,cssH){
+  const ctx=initCanvas(id,cssW,cssH);if(!ctx)return;
+  const P={t:14,r:12,b:28,l:44};
+  const cW=cssW-P.l-P.r,cH=cssH-P.t-P.b;
+  const vals=data.map(d=>d.profileVisits||0);
+  const maxV=Math.max(...vals,1)*1.15;
+  const n=data.length;
+  const barW=Math.max(4,Math.min(18,(cW/n)*0.7));
+  const xP=i=>P.l+(n>1?i/(n-1):0.5)*cW;
+  const yP=v=>P.t+cH-(v/maxV)*cH;
+  ctx.setLineDash([]);
+  for(let i=0;i<=4;i++){
+    const y=P.t+(i/4)*cH;
+    ctx.strokeStyle=GRID_C;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+cW,y);ctx.stroke();
+    ctx.fillStyle=TICK_C;ctx.font="9px 'DM Mono',monospace";ctx.textAlign="right";
+    ctx.fillText(Math.round(maxV-(i/4)*maxV),P.l-4,y+3);
+  }
+  drawBars(ctx,xP,yP,P.t+cH,vals,CHART_COLOR,barW);
+  const step=n>60?7:n>30?3:n>14?2:1;
+  ctx.textAlign="center";
+  vals.forEach((v,i)=>{
+    if(v>0&&(n<=30||i%step===0)){
+      ctx.fillStyle="#e8edf6";ctx.font=`bold ${Math.min(10,Math.max(7,barW))}px 'DM Mono',monospace`;
+      ctx.fillText(v,xP(i),yP(v)-4);
+    }
+  });
+  ctx.fillStyle=TICK_C;ctx.font="9px 'DM Mono',monospace";
+  data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,xP(i),P.t+cH+18);});
+}
+
 function drawChartWithOverlay(id,data,key,fmtY,refVal,refLabel,overlayInv,cssW,cssH){
   const ctx=initCanvas(id,cssW,cssH);if(!ctx)return;
   const P={t:12,r:overlayInv?52:12,b:26,l:52};
@@ -1842,23 +1899,29 @@ function renderPrincipalSeg(){
       </div>
       <div style="position:relative"><canvas id="c-seg-bar"></canvas><div class="tip" id="t-seg-bar"></div></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="cc" style="position:relative">
-        <div class="ch"><span class="ct">Hook Rate</span><span style="font-size:10px;color:var(--hint)">vídeo 3s ÷ impressões</span></div>
-        <div style="position:relative"><canvas id="c-hook"></canvas><div class="tip" id="t-hook"></div></div>
+    <div class="cc" style="margin-bottom:12px;position:relative">
+      <div class="ch">
+        <span class="ct">Investimento × Custo/Visita</span>
+        <div class="lg">
+          <span class="li"><span class="ll" style="background:${CHART_INV}"></span>Invest. (esq.)</span>
+          <span class="li"><span class="ll" style="background:${CHART_CPL}"></span>Custo/Visita (dir.)</span>
+        </div>
       </div>
-      <div class="cc" style="position:relative">
-        <div class="ch"><span class="ct">Hold Rate</span><span style="font-size:10px;color:var(--hint)">vídeo 15s ÷ vídeo 3s</span></div>
-        <div style="position:relative"><canvas id="c-hold"></canvas><div class="tip" id="t-hold"></div></div>
+      <div style="position:relative"><canvas id="c-dual-visita"></canvas><div class="tip" id="t-dual-visita"></div></div>
+    </div>
+    <div class="cc" style="position:relative">
+      <div class="ch">
+        <span class="ct">Volume de Visitas ao Perfil</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:${CHART_COLOR}"></span>Visitas/dia</span></div>
       </div>
+      <div style="position:relative"><canvas id="c-pv-bar"></canvas><div class="tip" id="t-pv-bar"></div></div>
     </div>`;
   requestAnimationFrame(()=>{
     const mW=document.getElementById("c-dual-seg")?.parentElement?.offsetWidth||720;
-    const hW=document.getElementById("c-hook")?.parentElement?.offsetWidth||360;
     drawDualDist("c-dual-seg",daily,mW,230);
     drawSegBar("c-seg-bar",daily,mW,180);
-    drawChartWithOverlay("c-hook",daily,"hookRate",fPct,null,"",false,hW,170);
-    drawChartWithOverlay("c-hold",daily,"holdRate",fPct,null,"",false,hW,170);
+    drawDualCustoVisita("c-dual-visita",daily,mW,230);
+    drawProfileBar("c-pv-bar",daily,mW,180);
     setupTip("c-dual-seg","t-dual-seg",daily,[
       {key:"spend",color:CHART_INV,name:"Investimento"},
       {key:"custoPorSeguidor",color:CHART_CPL,name:"Custo/Seg."},
@@ -1866,8 +1929,13 @@ function renderPrincipalSeg(){
     setupTip("c-seg-bar","t-seg-bar",daily,[
       {key:"seguidores",color:"#10b981",name:"Seguidores",fmt:v=>Math.round(v).toString()},
     ],40,12);
-    setupTip("c-hook","t-hook",daily,[{key:"hookRate",color:CHART_COLOR,name:"Hook Rate",fmt:fPct}],52,12);
-    setupTip("c-hold","t-hold",daily,[{key:"holdRate",color:CHART_COLOR,name:"Hold Rate",fmt:fPct}],52,12);
+    setupTip("c-dual-visita","t-dual-visita",daily,[
+      {key:"spend",color:CHART_INV,name:"Investimento"},
+      {key:"custoPorVisita",color:CHART_CPL,name:"Custo/Visita"},
+    ]);
+    setupTip("c-pv-bar","t-pv-bar",daily,[
+      {key:"profileVisits",color:CHART_COLOR,name:"Visitas",fmt:v=>Math.round(v).toString()},
+    ],40,12);
   });
 }
 
@@ -1882,33 +1950,30 @@ function renderTrafegoSeg(){
   const daily=getDailyDist(S.startDate,S.endDate);
 
   const METRICS=[
-    {key:"spend",          lbl:"Investimento",     fmt:fBRL, meta:null, higher:null},
-    {key:"custoPorVisita", lbl:"Custo/Visita",      fmt:fBRL, meta:null, higher:null},
-    {key:"cpc",            lbl:"CPC",               fmt:fBRL, meta:METAS_T.cpc.val, higher:false},
-    {key:"ctr",            lbl:"CTR",               fmt:fPct, meta:METAS_T.ctr.val, higher:true},
-    {key:"cpm",            lbl:"CPM",               fmt:fBRL, meta:METAS_T.cpm.val, higher:false},
-    {key:"hookRate",       lbl:"Hook Rate",         fmt:fPct, meta:null, higher:null},
-    {key:"holdRate",       lbl:"Hold Rate",         fmt:fPct, meta:null, higher:null},
-    {key:"txConvSeg",      lbl:"Tx Conv. Seguidor", fmt:fPct, meta:null, higher:null},
+    {key:"spend",          lbl:"Investimento",     fmt:fBRL},
+    {key:"custoPorVisita", lbl:"Custo/Visita",      fmt:fBRL},
+    {key:"cpc",            lbl:"CPC",               fmt:fBRL},
+    {key:"ctr",            lbl:"CTR",               fmt:fPct},
+    {key:"cpm",            lbl:"CPM",               fmt:fBRL},
+    {key:"hookRate",       lbl:"Hook Rate",         fmt:fPct},
+    {key:"holdRate",       lbl:"Hold Rate",         fmt:fPct},
+    {key:"txConvSeg",      lbl:"Tx Conv. Seguidor", fmt:fPct},
   ];
   function metricsRow(d){
     return METRICS.map(m=>{
       const v=d[m.key]||0;
-      const color=m.meta?statusColor(v,m.meta,m.higher):"var(--text-strong)";
-      const bord=m.meta?statusBorder(v,m.meta,m.higher):"var(--border)";
-      return `<div class="kc" style="padding:12px 14px;border-color:${bord}">
+      return `<div class="kc" style="padding:12px 14px">
         <div class="kc-lbl">${m.lbl}</div>
-        <div class="kc-val" style="color:${color};font-size:17px">${m.fmt(v)}</div>
-        ${m.meta?`<div class="kc-sub">Meta: ${m.fmt(m.meta)}</div>`:""}
+        <div class="kc-val" style="color:var(--text-strong);font-size:17px">${m.fmt(v)}</div>
       </div>`;
     }).join("");
   }
   const CHART_CFGS=[
-    {key:"ctr",          lbl:"CTR",             fmt:fPct, meta:METAS_T.ctr.val,  metaLbl:`Meta ${METAS_T.ctr.val}%`},
-    {key:"cpm",          lbl:"CPM",             fmt:fBRL, meta:METAS_T.cpm.val,  metaLbl:`Meta R$${METAS_T.cpm.val}`},
-    {key:"cpc",          lbl:"CPC",             fmt:fBRL, meta:METAS_T.cpc.val,  metaLbl:`Meta R$${METAS_T.cpc.val}`},
-    {key:"hookRate",     lbl:"Hook Rate",       fmt:fPct, meta:null,             metaLbl:""},
-    {key:"holdRate",     lbl:"Hold Rate",       fmt:fPct, meta:null,             metaLbl:""},
+    {key:"ctr",          lbl:"CTR",             fmt:fPct},
+    {key:"cpm",          lbl:"CPM",             fmt:fBRL},
+    {key:"cpc",          lbl:"CPC",             fmt:fBRL},
+    {key:"hookRate",     lbl:"Hook Rate",       fmt:fPct},
+    {key:"holdRate",     lbl:"Hold Rate",       fmt:fPct},
   ];
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
@@ -1928,17 +1993,14 @@ function renderTrafegoSeg(){
     </div>
     <div class="charts-2x3">
       ${CHART_CFGS.map(c=>`<div class="cc" style="position:relative">
-        <div class="ch">
-          <span class="ct">${c.lbl}</span>
-          ${c.metaLbl?`<span style="font-size:10px;color:var(--hint)">${c.metaLbl}</span>`:""}
-        </div>
+        <div class="ch"><span class="ct">${c.lbl}</span></div>
         <div style="position:relative"><canvas id="tcs-${c.key}"></canvas><div class="tip" id="tts-${c.key}"></div></div>
       </div>`).join("")}
     </div>`;
   requestAnimationFrame(()=>{
     const sW=document.getElementById("tcs-ctr")?.parentElement?.offsetWidth||500;
     CHART_CFGS.forEach(c=>{
-      drawChartWithOverlay(`tcs-${c.key}`,daily,c.key,c.fmt,c.meta,c.metaLbl,false,sW,170);
+      drawChartWithOverlay(`tcs-${c.key}`,daily,c.key,c.fmt,null,"",false,sW,170);
       setupTip(`tcs-${c.key}`,`tts-${c.key}`,daily,[{key:c.key,color:CHART_COLOR,name:c.lbl,fmt:c.fmt}],52,12);
     });
   });
@@ -2081,8 +2143,8 @@ function renderAnunciosSeg(){
               <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${c.custoPorVisita>0?fBRL(c.custoPorVisita):"—"}</td>
               <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace">${c.seguidores}</td>
               <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${c.custoPorSeg>0?fBRL(c.custoPorSeg):"—"}</td>
-              <td style="padding:9px 14px;text-align:right;color:${statusColor(c.ctr,METAS_T.ctr.val,true)}">${fPct(c.ctr)}</td>
-              <td style="padding:9px 14px;text-align:right;color:${statusColor(c.cpm,METAS_T.cpm.val,false)}">${fBRL(c.cpm)}</td>
+              <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${fPct(c.ctr)}</td>
+              <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${fBRL(c.cpm)}</td>
             </tr>`;
           }).join("")}
         </tbody>
@@ -2122,8 +2184,8 @@ function renderAnunciosSeg(){
               <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${a.custoPorVisita>0?fBRL(a.custoPorVisita):"—"}</td>
               <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace">${a.seguidores}</td>
               <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${a.custoPorSeg>0?fBRL(a.custoPorSeg):"—"}</td>
-              <td style="padding:9px 14px;text-align:right;color:${statusColor(a.ctr,METAS_T.ctr.val,true)}">${fPct(a.ctr)}</td>
-              <td style="padding:9px 14px;text-align:right;color:${statusColor(a.cpm,METAS_T.cpm.val,false)}">${fBRL(a.cpm)}</td>
+              <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${fPct(a.ctr)}</td>
+              <td style="padding:9px 14px;text-align:right;color:var(--text-strong)">${fBRL(a.cpm)}</td>
               <td style="padding:9px 14px;text-align:center" onclick="event.stopPropagation()">${a.igUrl?`<a href="${a.igUrl}" target="_blank" rel="noopener" style="display:inline-block;padding:3px 8px;border:1px solid rgba(99,179,237,.35);border-radius:5px;color:#63b3ed;text-decoration:none;font-size:10px;font-weight:600" title="Ver anúncio">Ver ↗</a>`:"—"}</td>
             </tr>`;
           }).join("")}
