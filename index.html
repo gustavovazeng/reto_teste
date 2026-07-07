@@ -565,7 +565,9 @@ async function loadData(force=false){
     // ── Process Dist Meta ─────────────────────────────────────────────
     const dMeta={}, dByAd={}, dByAdByDate={}, dByCamp={}, dByCampByDate={};
     // Handle duplicate header rows in Base Meta - dist
-    const distRows=parseSheet(dj).filter(r=>r["Date"]&&r["Date"]!=="Date");
+    // Normalize doubled headers from gviz ("Date Date" → "Date", "Spend (Cost, Amount Spent) Spend (Cost, Amount Spent)" → "Spend (Cost, Amount Spent)")
+    function normHeaders(r){const n={};for(const[k,v]of Object.entries(r)){const m=k.match(/^(.+) \1$/);n[m?m[1]:k]=v;}return n;}
+    const distRows=parseSheet(dj).map(normHeaders).filter(r=>r["Date"]&&r["Date"]!=="Date");
     for(const r of distRows){
       const d=toISO(r["Date"]);if(!d)continue;
       const sp=parseBRL(r["Spend (Cost, Amount Spent)"]||r["Amount Spent (BRL)"]||r["Valor gasto (BRL)"]||r["Valor gasto"]||r["Spend"]||"0");
