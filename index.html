@@ -574,7 +574,7 @@ async function loadData(force=false){
       const cl=parseInt(r["Action Link Clicks"]||r["Link Clicks"]||0)||0;
       const im=parseInt(r["Impressions"]||0)||0;
       const pv=parseInt(r["Instagram Profile Visits"]||r["Instagram Profile Visit"]||r["Profile Visits"]||0)||0;
-      const v3=parseInt(r["Action 3s Video Views"]||r["Action Video View"]||0)||0;
+      const v3=parseInt(r["Action 3s Video Views"]||r["Action Video View"]||r["Action 3s Video Views Action Video View"]||0)||0;
       const v15=parseInt(r["Video 15 Sec Watched Actions"]||0)||0;
       if(!dMeta[d])dMeta[d]={spend:0,clicks:0,impressions:0,profileVisits:0,video3s:0,video15s:0};
       dMeta[d].spend+=sp; dMeta[d].clicks+=cl; dMeta[d].impressions+=im;
