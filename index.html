@@ -833,27 +833,27 @@ function onDCCurrent(w,v){
 function sortCampanhas(col){
   if(S.cSort.col===col)S.cSort.dir=S.cSort.dir==="asc"?"desc":"asc";
   else{S.cSort.col=col;S.cSort.dir="desc";}
-  renderAnuncios();
+  S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();
 }
 function sortAnuncios(col){
   if(S.aSort.col===col)S.aSort.dir=S.aSort.dir==="asc"?"desc":"asc";
   else{S.aSort.col=col;S.aSort.dir="desc";}
-  renderAnuncios();
+  S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();
 }
 function toggleCamp(name){
   if(S.selectedCamps.has(name))S.selectedCamps.delete(name);
   else S.selectedCamps.add(name);
-  renderAnuncios();
+  S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();
 }
-function clearCamps(){S.selectedCamps.clear();renderAnuncios();}
-function setCampSearch(v){S.campSearch=v;renderAnuncios();}
-function setAdSearch(v){S.adSearch=v;renderAnuncios();}
+function clearCamps(){S.selectedCamps.clear();S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();}
+function setCampSearch(v){S.campSearch=v;S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();}
+function setAdSearch(v){S.adSearch=v;S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();}
 function toggleAd(code){
   if(S.selectedAds.has(code))S.selectedAds.delete(code);
   else S.selectedAds.add(code);
-  renderAnuncios();
+  S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();
 }
-function clearAds(){S.selectedAds.clear();renderAnuncios();}
+function clearAds(){S.selectedAds.clear();S.currentFunil==="seguidores"?renderAnunciosSeg():renderAnuncios();}
 function copyAdResumo(){
   const el=document.getElementById("page-anuncios");
   const text=el?._adResumoText||"";if(!text)return;
