@@ -744,7 +744,7 @@ async function loadData(force=false){
   let mj, retoJ, ceroJ, mapaJ;
   try{
     [mj, retoJ, ceroJ, mapaJ] = await Promise.all([
-      fetchSheetPaged(SHEET_META,"L",5000),
+      fetchSheetPaged(SHEET_META,"T",5000),
       fetchSheetPaged(SHEET_RETO,"L",5000),
       fetchSheetPaged(SHEET_CERO,"Z",5000),
       fetchSheetPaged(SHEET_MAPA,"Z",5000),
@@ -852,6 +852,7 @@ async function loadData(force=false){
         if(adId) mByCampByDate[campName][d].adIds.add(adId);
       }
     }
+
     S.meta=mD; S.metaByAd=mByAd; S.metaByAdByDate=mByAdByDate;
     S.metaByCamp=mByCamp; S.metaByCampByDate=mByCampByDate;
     S.metaByAdId=mByAdId; S.metaByCountry=mByCountry;
