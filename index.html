@@ -785,7 +785,7 @@ async function loadData(force=false){
       const adsetStatusR=r["Adset status"]||"";
       const advCode=extractAdvCode(adName);
       if(advCode){
-        if(!mByAd[advCode])mByAd[advCode]={advCode,adIds:new Set(),spend:0,clicks:0,impressions:0,ic:0,video3s:0,video15s:0,igUrl:"",dates:new Set()};
+        if(!mByAd[advCode])mByAd[advCode]={advCode,adName:adName,adIds:new Set(),spend:0,clicks:0,impressions:0,ic:0,video3s:0,video15s:0,igUrl:"",dates:new Set()};
         if(adId) mByAd[advCode].adIds.add(adId);
         mByAd[advCode].spend       += spendV;
         mByAd[advCode].clicks      += clicksV;
@@ -795,6 +795,7 @@ async function loadData(force=false){
         mByAd[advCode].video15s  += video15sV;
         mByAd[advCode].dates.add(d);
         if(igUrl && !mByAd[advCode].igUrl) mByAd[advCode].igUrl=igUrl;
+        if(!mByAd[advCode].adName&&adName) mByAd[advCode].adName=adName;
         if(!mByAdByDate[advCode]) mByAdByDate[advCode]={};
         if(!mByAdByDate[advCode][d]) mByAdByDate[advCode][d]={spend:0,clicks:0,impressions:0,ic:0,video3s:0,video15s:0,adIds:new Set(),igUrl:""};
         mByAdByDate[advCode][d].spend       += spendV;
@@ -1733,15 +1734,16 @@ function renderAnuncios(){
       }
       if(!igUrl) igUrl=meta.igUrl;
 
-      // Status: ativo somente se ad + adset + campanha todos ativos
-      let adStatusR="",adsetStatusR="",campStatusR="";
+      // Status: ativo se qualquer adId tiver ad+adset+camp todos ACTIVE
+      let isActive=false, hasStatusData=false;
       for(const adId of useIds){
         const adData=dd.metaByAdId[adId];
-        if(adData&&(!adStatusR||adData.lastStatusDate>"")){
-          adStatusR=adData.adStatus; adsetStatusR=adData.adsetStatus; campStatusR=adData.campStatus;
+        if(!adData) continue;
+        if(adData.adStatus) hasStatusData=true;
+        if(adData.adStatus==="ACTIVE"&&adData.adsetStatus==="ACTIVE"&&adData.campStatus==="ACTIVE"){
+          isActive=true; break;
         }
       }
-      const isActive=adStatusR==="ACTIVE"&&adsetStatusR==="ACTIVE"&&campStatusR==="ACTIVE";
 
       // Ticket ascensão (funil completo, sem filtro de data)
       let totalAscensoes=0;
@@ -1750,7 +1752,7 @@ function renderAnuncios(){
           totalAscensoes+=(buyerTotalSpent.get(eventKey)||0);
         }
       }
-      rows.push({advCode,spend,clicks,impressions,qtd,valor,igUrl,
+      rows.push({advCode,adName:dd.metaByAd[advCode]?.adName||advCode,spend,clicks,impressions,qtd,valor,igUrl,
         cpc:clicks>0?spend/clicks:0,
         ctr:impressions>0?(clicks/impressions)*100:0,
         cpm:impressions>0?(spend/impressions)*1000:0,
@@ -1761,7 +1763,7 @@ function renderAnuncios(){
         ic, cpic:ic>0?spend/ic:0,
         hookRate:impressions>0?(video3s/impressions)*100:0,
         holdRate:video3s>0?(video15s/video3s)*100:0,
-        isActive, adStatusR, adsetStatusR, campStatusR});
+        isActive, hasStatusData});
     }
     return rows.filter(r=>r.spend>0);
   }
@@ -1901,7 +1903,6 @@ function renderAnuncios(){
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${s.qtd>0?sc(cpv,META_CPV,false):"var(--hint)"}">${s.qtd>0?fBRL(cpv):"—"}</td>
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${s.qtd>0?sc(roas,META_ROAS,true):"var(--hint)"}">${s.qtd>0?roas.toFixed(2)+"x":"—"}</td>
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${s.qtd>0?fBRL(ticket):"—"}</td>
-          <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${(s.ic||0)>0?(s.ic||0):"—"}</td>
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">${(s.ic||0)>0?fBRL(s.spend/(s.ic||1)):"—"}</td>
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${sc(ctr,METAS_T.ctr.val,true)}">${fPct(ctr)}</td>
           <td style="padding:9px 14px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:${sc(cpm,METAS_T.cpm.val,false)}">${fBRL(cpm)}</td>
@@ -1924,7 +1925,6 @@ function renderAnuncios(){
             <th style="${thStyle};text-align:right">Custo/Venda</th>
             <th style="${thStyle};text-align:right">ROAS</th>
             <th style="${thStyle};text-align:right">Ticket Médio</th>
-            <th style="${thStyle};text-align:right">Init. Checkout</th>
             <th style="${thStyle};text-align:right">Custo/IC</th>
             <th style="${thStyle};text-align:right">CTR</th>
             <th style="${thStyle};text-align:right">CPM</th>
@@ -1958,7 +1958,6 @@ function renderAnuncios(){
           ${thC("cpv","Custo/Venda","camp")}
           ${thC("roas","ROAS","camp")}
           ${thC("ticket","Ticket Médio","camp")}
-          ${thC("ic","Init. Checkout","camp")}
           ${thC("cpic","Custo/IC","camp")}
           ${thC("ctr","CTR","camp")}
           ${thC("cpm","CPM","camp")}
@@ -1988,7 +1987,6 @@ function renderAnuncios(){
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpv,META_CPV,false)}">${r.qtd>0?fBRL(r.cpv):"—"}</td>
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${r.qtd>0?sc(r.roas,META_ROAS,true):"var(--hint)"}">${r.qtd>0?r.roas.toFixed(2)+"x":"—"}</td>
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd>0?fBRL(r.ticket):"—"}</td>
-              <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.ic||"—"}</td>
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.ic>0?fBRL(r.cpic):"—"}</td>
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ctr,METAS_T.ctr.val,true)}">${fPct(r.ctr)}</td>
               <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpm,METAS_T.cpm.val,false)}">${fBRL(r.cpm)}</td>
@@ -2035,7 +2033,6 @@ function renderAnuncios(){
           <div style="background:var(--card);border-radius:8px;padding:10px 12px;border:1px solid ${pCpv>0?statusBorder(pCpv,META_CPV,false):"var(--border)"}"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">Custo/Venda</div><div style="font-size:13px;font-weight:700;color:${pCpv>0?sc(pCpv,META_CPV,false):"var(--hint)"};font-family:'JetBrains Mono',monospace">${pQtd>0?fBRL(pCpv):"—"}</div></div>
           <div style="background:var(--card);border-radius:8px;padding:10px 12px;border:1px solid ${pRoas>0?statusBorder(pRoas,META_ROAS,true):"var(--border)"}"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">ROAS</div><div style="font-size:13px;font-weight:700;color:${pRoas>0?sc(pRoas,META_ROAS,true):"var(--hint)"}">${pRoas>0?pRoas.toFixed(2)+"x":"—"}</div></div>
           <div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">Ticket Médio</div><div style="font-size:13px;font-weight:700;color:var(--text-strong);font-family:'JetBrains Mono',monospace">${pQtd>0?fBRL(pTicket):"—"}</div></div>
-          <div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">Init. Checkout</div><div style="font-size:13px;font-weight:700;color:var(--text-strong)">${pIc||"—"}</div></div>
           <div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">Custo/IC</div><div style="font-size:13px;font-weight:700;color:var(--text-strong);font-family:'JetBrains Mono',monospace">${pIc>0?fBRL(pCpic):"—"}</div></div>
           <div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">CTR</div><div style="font-size:13px;font-weight:700;color:${sc(pCtr,METAS_T.ctr.val,true)}">${fPct(pCtr)}</div></div>
           <div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">CPM</div><div style="font-size:13px;font-weight:700;color:${sc(pCpm,METAS_T.cpm.val,false)};font-family:'JetBrains Mono',monospace">${fBRL(pCpm)}</div></div>
@@ -2066,7 +2063,6 @@ function renderAnuncios(){
           ${thC("ticket","Ticket Médio Front","ad")}
           ${thC("ticketAsc","Ticket Médio Ascensões","ad")}
           ${thC("roas","ROAS","ad")}
-          ${thC("ic","Init. Checkout","ad")}
           ${thC("cpic","Custo/IC","ad")}
           ${thC("ctr","CTR","ad")}
           ${thC("cpm","CPM","ad")}
@@ -2093,16 +2089,15 @@ function renderAnuncios(){
               </div>
             </td>
             <td style="padding:10px 14px;text-align:left">
-              <span style="background:var(--surf);border:1px solid var(--border-h);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace">${r.advCode}</span>
+              <span style="background:var(--surf);border:1px solid var(--border-h);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace" title="${r.adName}">${r.adName||r.advCode}</span>
             </td>
-            <td style="padding:10px 12px;text-align:center"><div style="width:9px;height:9px;border-radius:50%;background:${r.isActive?'#22c55e':'#ef4444'};margin:0 auto" title="${r.isActive?'Ativo':'Pausado'}"></div></td>
+            <td style="padding:10px 12px;text-align:center"><div style="width:9px;height:9px;border-radius:50%;background:${!r.hasStatusData?'var(--border-h)':r.isActive?'#22c55e':'#ef4444'};margin:0 auto" title="${!r.hasStatusData?'Sem dados':r.isActive?'Ativo':'Pausado'}"></div></td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${fBRL(r.spend)}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpv,META_CPV,false)};font-weight:600">${r.qtd>0?fBRL(r.cpv):"—"}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ticket,META_TICKET,true)};font-weight:600">${r.qtd>0?fBRL(r.ticket):"—"}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.qtd>0?fBRL(r.ticketAsc):"—"}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${r.roas>0?sc(r.roas,META_ROAS,true):"var(--hint)"};font-weight:600">${r.roas>0?r.roas.toFixed(2)+"x":"—"}</td>
-            <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.ic||"—"}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${r.ic>0?fBRL(r.cpic):"—"}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.ctr,METAS_T.ctr.val,true)};font-weight:600">${fPct(r.ctr)}</td>
             <td style="padding:10px 14px;text-align:right;font-family:'JetBrains Mono',monospace;color:${sc(r.cpm,METAS_T.cpm.val,false)};font-weight:600">${fBRL(r.cpm)}</td>
