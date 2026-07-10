@@ -87,8 +87,13 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 .ana-tab{padding:7px 14px;font-size:11px;font-weight:500;color:var(--hint);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .12s}
 .ana-tab:hover{color:var(--text)}
 .ana-tab.active{color:#60a5fa;border-bottom-color:#3b82f6}
-.dash-sel{background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;padding:6px 26px 6px 10px;cursor:pointer;outline:none;appearance:none;-webkit-appearance:none;transition:border-color .15s}
-.dash-sel:focus{border-color:rgba(96,165,250,.4)}
+.funil-btn:hover{border-color:var(--border-h)}
+.dash-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:190px;background:#141c2e;border:1px solid var(--border-h);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.5);z-index:50;padding:5px;display:none}
+.dash-opt{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:8px;border:none;background:transparent;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;color:var(--muted);text-align:left;transition:background .12s;white-space:nowrap}
+.dash-opt:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.dash-opt.active{color:var(--green);font-weight:600}
+.dash-opt-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--hint);transition:background .15s}
+.dash-opt.active .dash-opt-dot{background:var(--green)}
 @media(max-width:768px){
   .app-hdr{height:auto;flex-wrap:wrap;padding:0;gap:0;align-items:stretch}
   .funil-wrap{padding:9px 14px;flex-shrink:0;border-bottom:1px solid var(--border);width:auto}
@@ -129,10 +134,26 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
 <body>
 <header class="app-hdr">
   <div class="funil-wrap" style="padding:8px 12px">
-    <select id="dash-selector" class="dash-sel" onchange="switchDash(this.value)">
-      <option value="leadscore">⊞ Leadscore</option>
-      <option value="seguidores">📈 Seguidores</option>
-    </select>
+    <div style="position:relative">
+      <button class="funil-btn" id="dash-btn" onclick="toggleDashMenu(event)">
+        <span class="funil-dot"></span>
+        <div>
+          <div class="funil-name" id="funil-name">AGM — Leadscore</div>
+          <div class="funil-status" id="funil-status">ativo</div>
+        </div>
+        <svg id="dash-chevron" width="10" height="6" viewBox="0 0 10 6" fill="none" style="margin-left:4px;color:var(--hint);transition:transform .2s;flex-shrink:0">
+          <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="dash-menu" id="dash-menu">
+        <button class="dash-opt active" id="dash-opt-leadscore" onclick="selectDash('leadscore')">
+          <span class="dash-opt-dot"></span>AGM — Leadscore
+        </button>
+        <button class="dash-opt" id="dash-opt-seguidores" onclick="selectDash('seguidores')">
+          <span class="dash-opt-dot"></span>AGM — Seguidores
+        </button>
+      </div>
+    </div>
   </div>
   <nav class="hdr-tabs" id="hdr-tabs">
     <button class="htab htab-active" onclick="navTo('principal')">⊞ Principal</button>
@@ -733,9 +754,27 @@ function toggleOverlay(key,which){
 }
 
 // ── Dashboard switching ───────────────────────────────────────────────────
+function toggleDashMenu(e){
+  e&&e.stopPropagation();
+  const menu=document.getElementById("dash-menu");
+  const chevron=document.getElementById("dash-chevron");
+  const isOpen=menu.style.display==="block";
+  menu.style.display=isOpen?"none":"block";
+  if(chevron)chevron.style.transform=isOpen?"":"rotate(180deg)";
+  if(!isOpen)setTimeout(()=>document.addEventListener("click",closeDashMenu,{once:true}),0);
+}
+function closeDashMenu(){
+  const menu=document.getElementById("dash-menu");
+  const chevron=document.getElementById("dash-chevron");
+  if(menu)menu.style.display="none";
+  if(chevron)chevron.style.transform="";
+}
+function selectDash(dash){
+  closeDashMenu();
+  switchDash(dash);
+}
 function switchDash(dash){
   S.activeDash=dash;
-  // Reset to principal; clear camp/ad selections
   S.currentPage="principal";
   S.selectedCamps=new Set();S.selectedAds=new Set();
   S.campSearch="";S.adSearch="";
@@ -749,7 +788,13 @@ function switchDash(dash){
 function getCurrentPeriod(){return{s:S.startDate,e:S.endDate,q:S.activeQuick};}
 function renderHeader(){
   const p=S.currentPage;
-  const sel=document.getElementById("dash-selector");if(sel)sel.value=S.activeDash;
+  // Sync dropdown button label + active state
+  const fn=document.getElementById("funil-name");
+  if(fn)fn.textContent=S.activeDash==="seguidores"?"AGM — Seguidores":"AGM — Leadscore";
+  ["leadscore","seguidores"].forEach(d=>{
+    const opt=document.getElementById("dash-opt-"+d);
+    if(opt)opt.classList.toggle("active",d===S.activeDash);
+  });
   const tabsEl=document.getElementById("hdr-tabs");if(!tabsEl)return;
   const TABS_LS=[
     {id:"principal",label:"⊞ Principal"},
