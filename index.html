@@ -138,7 +138,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
       <button class="funil-btn" id="dash-btn" onclick="toggleDashMenu(event)">
         <span class="funil-dot"></span>
         <div>
-          <div class="funil-name" id="funil-name">AGM — Leadscore</div>
+          <div class="funil-name" id="funil-name">AGM - Perpétuo</div>
           <div class="funil-status" id="funil-status">ativo</div>
         </div>
         <svg id="dash-chevron" width="10" height="6" viewBox="0 0 10 6" fill="none" style="margin-left:4px;color:var(--hint);transition:transform .2s;flex-shrink:0">
@@ -147,10 +147,10 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
       </button>
       <div class="dash-menu" id="dash-menu">
         <button class="dash-opt active" id="dash-opt-leadscore" onclick="selectDash('leadscore')">
-          <span class="dash-opt-dot"></span>AGM — Leadscore
+          <span class="dash-opt-dot"></span>AGM - Perpétuo
         </button>
         <button class="dash-opt" id="dash-opt-seguidores" onclick="selectDash('seguidores')">
-          <span class="dash-opt-dot"></span>AGM — Seguidores
+          <span class="dash-opt-dot"></span>AGM - Distribuição AGM
         </button>
       </div>
     </div>
@@ -790,7 +790,7 @@ function renderHeader(){
   const p=S.currentPage;
   // Sync dropdown button label + active state
   const fn=document.getElementById("funil-name");
-  if(fn)fn.textContent=S.activeDash==="seguidores"?"AGM — Seguidores":"AGM — Leadscore";
+  if(fn)fn.textContent=S.activeDash==="seguidores"?"AGM - Distribuição AGM":"AGM - Perpétuo";
   ["leadscore","seguidores"].forEach(d=>{
     const opt=document.getElementById("dash-opt-"+d);
     if(opt)opt.classList.toggle("active",d===S.activeDash);
@@ -1878,7 +1878,7 @@ function renderPrincipalSeg(){
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
-        <div class="hdr-title">AGM — Seguidores</div>
+        <div class="hdr-title">AGM - Distribuição AGM</div>
         <div class="hdr-sub">atualizado em: ${S.updated||"—"}${daily.length>0?` · ${daily.length} dias`:""}</div>
       </div>
       <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
