@@ -274,6 +274,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.4;cursor:pointer;fi
       <button class="btn-pre" id="hpre-ontem" onclick="applyQuickCurrent('ontem')">Ontem</button>
       <button class="btn-pre" id="hpre-7d" onclick="applyQuickCurrent('7d')">7 dias</button>
       <button class="btn-pre on" id="hpre-30d" onclick="applyQuickCurrent('30d')">30 dias</button>
+      <button class="btn-pre" id="hpre-mes" onclick="applyQuickCurrent('mes')">Este mês</button>
     </div>
     <div class="drbox">
       <span class="drbox-icon">📅</span>
@@ -377,6 +378,7 @@ const S = {
   distMetaByAd:{},       // adName → aggregated
   distMetaByAdByDate:{}, // adName → date → {...}
   distMetaByCamp:{},     // campName → aggregated
+  distMetaByCampByDate:{}, // campName → date → {...}
   distSeg:{},            // date → {seguidores,profileVisits}
   distSegByAd:{},        // adName → {seguidores,profileVisits}
   distSegByCamp:{},      // campName → {seguidores,profileVisits}
@@ -462,6 +464,15 @@ function renderHeader(){
     : [{id:"principal",icon:"⊞",label:"Principal"},{id:"trafego",icon:"⟳",label:"Métricas tráfego"},{id:"funil",icon:"▽",label:"Métricas do funil"},{id:"anuncios",icon:"◈",label:"Anúncios"},{id:"resumo",icon:"📋",label:"Resumo diário"}];
   const tabsEl=document.getElementById("hdr-tabs");
   if(tabsEl) tabsEl.innerHTML=tabs.map(t=>`<button class="htab${p===t.id?" htab-active":""}" onclick="navTo('${t.id}')"><span class="htab-icon">${t.icon}</span>${t.label}</button>`).join("");
+  // Sync preset buttons active state
+  ["hoje","ontem","7d","30d","mes"].forEach(k=>{
+    const b=document.getElementById("hpre-"+k);
+    if(b) b.classList.toggle("on", S.activeQuick===k);
+  });
+  // Sync date inputs
+  const _hs=document.getElementById("hdr-start"), _he=document.getElementById("hdr-end");
+  if(_hs) _hs.value=S.startDate||"";
+  if(_he) _he.value=S.endDate||"";
 }
 
 function applyQuickCurrentAll(){
@@ -969,10 +980,13 @@ async function loadData(force=false){
     }
 
     // ── Distribuição de Conteúdo ──────────────────────────────────────────
-    const dD={}, dByAd={}, dByAdByDate={}, dByCamp={};
+    const dD={}, dByAd={}, dByAdByDate={}, dByCamp={}, dByCampByDate={};
     for(const r of parseSheet(distJ)){
       const d=r["Date"]||""; if(!d||d==="Date")continue;
-      const spendV    =parseBRL(r["Spend (Cost, Amount Spent)"]);
+      const _acc=(r["Account Name"]||"").trim();
+      const _rawSpend=parseBRL(r["Spend (Cost, Amount Spent)"]);
+      // CA 03 = USD; all others = Mexican Peso, divide by 18
+      const spendV=_acc==="CA 03"?_rawSpend:_rawSpend/18;
       const clicksV   =parseInt(r["Action Link Clicks"]||0)||0;
       const impressV  =parseInt(r["Impressions"]||0)||0;
       const video3sV  =parseInt(r["Action 3s Video Views"]||0)||0;
@@ -1001,6 +1015,11 @@ async function loadData(force=false){
         if(!dByCamp[campName])dByCamp[campName]={campName,spend:0,clicks:0,impressions:0,video3s:0,video15s:0,profileVisits:0,seguidores:0};
         dByCamp[campName].spend+=spendV; dByCamp[campName].clicks+=clicksV; dByCamp[campName].impressions+=impressV;
         dByCamp[campName].video3s+=video3sV; dByCamp[campName].video15s+=video15sV; dByCamp[campName].profileVisits+=profVisV;
+        if(!dByCampByDate[campName])dByCampByDate[campName]={};
+        if(!dByCampByDate[campName][d])dByCampByDate[campName][d]={spend:0,clicks:0,impressions:0,video3s:0,video15s:0,profileVisits:0};
+        dByCampByDate[campName][d].spend+=spendV; dByCampByDate[campName][d].clicks+=clicksV;
+        dByCampByDate[campName][d].impressions+=impressV; dByCampByDate[campName][d].video3s+=video3sV;
+        dByCampByDate[campName][d].video15s+=video15sV; dByCampByDate[campName][d].profileVisits+=profVisV;
       }
     }
     // ── Seguidores ────────────────────────────────────────────────────────
@@ -1029,7 +1048,7 @@ async function loadData(force=false){
       }
     }
     S.distMeta=dD; S.distMetaByAd=dByAd; S.distMetaByAdByDate=dByAdByDate;
-    S.distMetaByCamp=dByCamp; S.distSeg=sD; S.distSegByAd=sByAd; S.distSegByCamp=sByCamp;
+    S.distMetaByCamp=dByCamp; S.distMetaByCampByDate=dByCampByDate; S.distSeg=sD; S.distSegByAd=sByAd; S.distSegByCamp=sByCamp;
     S.updated=lastISO?fDateBR(lastISO):"—";
 
     S.firstLoad=false;
@@ -3321,14 +3340,11 @@ function renderDistAnuncios(){
   // ── Build camp rows filtered by date ──────────────────────────────────────
   const campRows=Object.values(S.distMetaByCamp||{}).map(c=>{
     let spend=0,clicks=0,impressions=0,video3s=0,video15s=0,profileVisits=0;
-    for(const [adName,byDate] of Object.entries(S.distMetaByAdByDate||{})){
-      const ad=S.distMetaByAd[adName];
-      if(!ad||ad.campName!==c.campName) continue;
-      for(const [d,v] of Object.entries(byDate)){
-        if(d<start||d>end) continue;
-        spend+=v.spend;clicks+=v.clicks;impressions+=v.impressions;
-        video3s+=v.video3s;video15s+=v.video15s;profileVisits+=v.profileVisits;
-      }
+    const byDate=S.distMetaByCampByDate[c.campName]||{};
+    for(const [d,v] of Object.entries(byDate)){
+      if(d<start||d>end) continue;
+      spend+=v.spend;clicks+=v.clicks;impressions+=v.impressions;
+      video3s+=v.video3s;video15s+=v.video15s;profileVisits+=v.profileVisits;
     }
     const seg=(S.distSegByCamp[c.campName]||{seguidores:0}).seguidores;
     const ctr=impressions>0?clicks/impressions*100:0;
@@ -3400,9 +3416,8 @@ function renderDistAnuncios(){
     const bg=i%2?"rgba(255,255,255,.02)":"transparent";
     const nm=(r.adName.length>50?r.adName.slice(0,50)+"…":r.adName).replace(/&/g,"&amp;").replace(/</g,"&lt;");
     const tt=r.adName.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
-    const camp=r.campName.slice(0,40).replace(/&/g,"&amp;");
     return "<tr style=\"background:"+bg+"\">"
-      +"<td style=\""+tdL+"\" title=\""+tt+"\"><div style=\"font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--surf);border:1px solid var(--border-h);border-radius:5px;padding:2px 8px;display:inline-block;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">"+nm+"</div><div style=\"font-size:10px;color:var(--hint);margin-top:2px\">"+camp+"</div></td>"
+      +"<td style=\""+tdL+"\" title=\""+tt+"\"><div style=\"font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--surf);border:1px solid var(--border-h);border-radius:5px;padding:2px 8px;display:inline-block;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">"+nm+"</div></td>"
       +"<td style=\""+td+"\">"+fBRL(r.spend)+"</td>"
       +"<td style=\""+td+"\">"+r.profileVisits.toLocaleString("pt-BR")+"</td>"
       +"<td style=\""+td+"\">"+(r.cpVisita>0?fBRL(r.cpVisita):"—")+"</td>"
@@ -3549,7 +3564,7 @@ function renderDistResumo(){
   const fullText=[
     `*Finanzas - Distribuição de Conteúdo*`,``,
     `_${dateLabel}_`,``,
-    textBlock("Total",start===end?fDM(start):`${fDM(start)} a ${fDM(end)}`,tot),``,``,
+    textBlock("Total", tot),``,``,
     textBlock("Ontem",ontem),``,``,
     textBlock("Hoje",hoje),
   ].join("\n");
