@@ -765,9 +765,8 @@ async function loadData(force=false){
   S.loading=true; S.error=null; render();
 
   // Tenta buscar do Google Sheets; fallback para dados embutidos
-  let mj, retoJ, ceroJ, mapaJ;
+  let mj, retoJ, ceroJ, mapaJ, distJ, segJ;
   try{
-    let distJ, segJ;
     [mj, retoJ, ceroJ, mapaJ, distJ, segJ] = await Promise.all([
       fetchSheetPaged(SHEET_META,"U",5000),
       fetchSheetPaged(SHEET_RETO,"L",5000),
