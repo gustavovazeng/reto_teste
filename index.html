@@ -349,6 +349,17 @@ const METAS_T = {
 const CHART_COLOR = "#3b82f6";
 const CHART_INV   = "#3b82f6";
 const CHART_CPV   = "#fbbf24";
+// ── Distribuição metas (globais) ─────────────────────────────────────────────
+const METAS_DIST={
+  cpVisita: {val:0.05,  higher:false, label:"$0,05"},
+  cpSeg:    {val:1.03,  higher:false, label:"$1,03"},
+  txConv:   {val:5.27,  higher:true,  label:"5,27%"},
+  hookRate: {val:25.56, higher:true,  label:"25,56%"},
+  holdRate: {val:29.02, higher:true,  label:"29,02%"},
+  cpc:      {val:0.05,  higher:false, label:"$0,05"},
+  ctr:      {val:2.68,  higher:true,  label:"2,68%"},
+  cpm:      {val:1.34,  higher:false, label:"$1,34"},
+};
 
 // State
 const S = {
@@ -369,7 +380,7 @@ const S = {
   distSeg:{},            // date → {seguidores,profileVisits}
   distSegByAd:{},        // adName → {seguidores,profileVisits}
   distSegByCamp:{},      // campName → {seguidores,profileVisits}
-  currentFunil:"reto",
+  distPlanHoje:"",       // editable plan text for hoje block
   // Principal
   // Filtro global de datas — compartilhado por todas as abas
   startDate:nDaysAgoISO(29), endDate:todayISO(), activeQuick:"30d",
@@ -417,6 +428,11 @@ function toggleFunilMenu(e){
 function closeFunilMenu(){
   const m=document.getElementById("funil-menu");
   if(m) m.style.display="none";
+}
+function toggleDistCamp(campName){
+  if(S.selectedCamps.has(campName)) S.selectedCamps.delete(campName);
+  else S.selectedCamps.add(campName);
+  render();
 }
 document.addEventListener("click",()=>{
   const m=document.getElementById("funil-menu");
@@ -1445,6 +1461,85 @@ function drawBarVendas(id, data, cssW, cssH){
   }
 
   // Labels X
+  const step=n>60?7:n>30?3:n>14?2:1;
+  ctx.fillStyle=TICK_C;ctx.font="9px 'JetBrains Mono',monospace";ctx.textAlign="center";ctx.setLineDash([]);
+  data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,P.l+slot*i+slot/2,P.t+cH+18);});
+}
+
+// ── Dist chart helpers ────────────────────────────────────────────────────
+// Generic dual-axis (spend left, any metric right) for dist funil
+function drawDistDual(id, data, rKey, rRef, rRefLabel, cssW, cssH){
+  const ctx=initCanvas(id,cssW,cssH); if(!ctx)return;
+  const P={t:14,r:58,b:28,l:58};
+  const cW=cssW-P.l-P.r, cH=cssH-P.t-P.b;
+  const lVals=data.map(d=>d.spend||0);
+  const rVals=data.map(d=>d[rKey]||0);
+  const lMax=Math.max(...lVals,0.01)*1.15;
+  const rMax=Math.max(...rVals,rRef||0.01,0.01)*1.4;
+  const xP=i=>P.l+(data.length>1?i/(data.length-1):0.5)*cW;
+  const yPL=v=>P.t+cH-(v/lMax)*cH;
+  const yPR=v=>P.t+cH-(v/rMax)*cH;
+  ctx.setLineDash([]);
+  for(let i=0;i<=4;i++){
+    const y=P.t+(i/4)*cH;
+    ctx.strokeStyle=GRID_C;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+cW,y);ctx.stroke();
+    ctx.fillStyle=TICK_C;ctx.font="10px 'DM Mono',monospace";
+    ctx.textAlign="right";ctx.fillText(fBRLShort(lMax-(i/4)*lMax),P.l-5,y+3.5);
+    ctx.textAlign="left";ctx.fillText(fBRLShort(rMax-(i/4)*rMax),P.l+cW+5,y+3.5);
+  }
+  if(rRef){
+    const mY=yPR(rRef);
+    ctx.strokeStyle="#f59e0b55";ctx.lineWidth=1;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(P.l,mY);ctx.lineTo(P.l+cW,mY);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle="#f59e0b";ctx.font="9px 'Inter',sans-serif";ctx.textAlign="left";
+    ctx.fillText(rRefLabel,P.l+cW+4,mY-3);
+  }
+  drawLineArea(ctx,xP,yPL,lVals,CHART_INV,true);
+  drawLineArea(ctx,xP,yPR,rVals,"#f59e0b",false);
+  const step=data.length>60?7:data.length>30?3:data.length>14?2:1;
+  ctx.fillStyle=TICK_C;ctx.font="10px 'DM Mono',monospace";ctx.textAlign="center";ctx.setLineDash([]);
+  data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,xP(i),P.t+cH+18);});
+}
+
+// Bar chart for dist data (seguidores or profile visits)
+function drawDistBar(id, data, key, color, fmtFn, cssW, cssH){
+  const ctx=initCanvas(id,cssW,cssH); if(!ctx)return;
+  const P={t:22,r:16,b:26,l:32};
+  const cW=cssW-P.l-P.r, cH=cssH-P.t-P.b;
+  const n=data.length; if(n===0)return;
+  const vals=data.map(d=>d[key]||0);
+  const maxV=Math.max(...vals,1);
+  for(let i=0;i<=4;i++){
+    const y=P.t+(i/4)*cH;
+    ctx.strokeStyle=GRID_C;ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(P.l,y);ctx.lineTo(P.l+cW,y);ctx.stroke();
+  }
+  const slot=cW/n;
+  const barW=Math.max(3,Math.min(28,slot*0.6));
+  for(let i=0;i<n;i++){
+    const v=vals[i];
+    const cx=P.l+slot*i+slot/2;
+    const bh=Math.max(v>0?2:0,(v/maxV)*cH);
+    const x=cx-barW/2;
+    const y=P.t+cH-bh;
+    const g=ctx.createLinearGradient(0,y,0,P.t+cH);
+    g.addColorStop(0,color+"dd");g.addColorStop(1,color+"44");
+    ctx.fillStyle=g;
+    const r=Math.min(3,barW/2,bh/2);
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.lineTo(x+barW-r,y);
+    ctx.quadraticCurveTo(x+barW,y,x+barW,y+r);
+    ctx.lineTo(x+barW,y+bh);ctx.lineTo(x,y+bh);ctx.lineTo(x,y+r);
+    ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+    ctx.fill();
+    if(v>0){
+      ctx.fillStyle="#e8edf6";
+      ctx.font=`bold ${Math.max(8,Math.min(11,barW-1))}px 'DM Sans',sans-serif`;
+      ctx.textAlign="center";ctx.fillText(fmtFn(v),cx,y-4);
+    }
+  }
   const step=n>60?7:n>30?3:n>14?2:1;
   ctx.fillStyle=TICK_C;ctx.font="9px 'JetBrains Mono',monospace";ctx.textAlign="center";ctx.setLineDash([]);
   data.forEach((d,i)=>{if(i%step===0)ctx.fillText(d.label,P.l+slot*i+slot/2,P.t+cH+18);});
@@ -3087,6 +3182,27 @@ function render(){
 
 
 // ── Distribuição: helpers ─────────────────────────────────────────────────
+function getDistDaily(start, end){
+  const allDates=new Set([...Object.keys(S.distMeta||{}),...Object.keys(S.distSeg||{})]);
+  return [...allDates].filter(d=>d>=start&&d<=end).sort().map(d=>{
+    const m=S.distMeta[d]||{};
+    const sg=S.distSeg[d]||{};
+    const spend=m.spend||0,clicks=m.clicks||0,impressions=m.impressions||0;
+    const video3s=m.video3s||0,video15s=m.video15s||0,profileVisits=m.profileVisits||0;
+    const seguidores=sg.seguidores||0;
+    const ctr=impressions>0?clicks/impressions*100:0;
+    const cpm=impressions>0?spend/impressions*1000:0;
+    const cpc=clicks>0?spend/clicks:0;
+    const hookRate=impressions>0?video3s/impressions*100:0;
+    const holdRate=video3s>0?video15s/video3s*100:0;
+    const cps=seguidores>0?spend/seguidores:0;
+    const cpVisita=profileVisits>0?spend/profileVisits:0;
+    const [,mm,dd2]=d.split("-");
+    return {date:d,label:`${dd2}/${mm}`,spend,clicks,impressions,video3s,video15s,
+      profileVisits,seguidores,ctr,cpm,cpc,hookRate,holdRate,cps,cpVisita};
+  });
+}
+
 function getDistTotals(start, end){
   const dD=S.distMeta||{};
   let spend=0,clicks=0,impressions=0,video3s=0,video15s=0,profileVisits=0;
@@ -3115,57 +3231,86 @@ function renderDistPrincipal(){
   const el=document.getElementById("page-principal"); if(!el)return;
   const start=S.startDate, end=S.endDate;
   const tot=getDistTotals(start,end);
+  const daily=getDistDaily(start,end);
   const today=todayISO();
-  const todayTot=getDistTotals(today,today);
 
-  function kpi(label, val, sub){
-    return `<div class="kc">
-      <div class="kc-lbl">${label}</div>
-      <div class="kc-val">${val}</div>
-      ${sub?`<div class="kc-sub">${sub}</div>`:""}
-    </div>`;
-  }
+  const cpVisitaV=tot.profileVisits>0?tot.spend/tot.profileVisits:0;
+  const cpVisitaC=cpVisitaV>0?statusColor(cpVisitaV,METAS_DIST.cpVisita.val,false):"var(--text-strong)";
+  const cpSegC=tot.cps>0?statusColor(tot.cps,METAS_DIST.cpSeg.val,false):"var(--text-strong)";
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
-        <div class="hdr-title">Distribuição de Conteúdo</div>
-        <div class="hdr-sub">${fDateBR(start)} → ${fDateBR(end)}</div>
+        <div class="hdr-title">Finanzas — Distribuição de Conteúdo</div>
+        <div class="hdr-sub">atualizado em: ${fDateBR(today)} · ${daily.length} dias</div>
       </div>
+      <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
     </div>
 
-    <div class="section-lbl">Período selecionado</div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">
-      ${kpi("Investimento", fBRL(tot.spend))}
-      ${kpi("Seguidores ganhos", tot.seguidores.toLocaleString("pt-BR"))}
-      ${kpi("Custo/Seguidor", tot.cps>0?fBRL(tot.cps):"—")}
-      ${kpi("Visitas ao perfil", tot.profileVisits.toLocaleString("pt-BR"))}
-      ${kpi("Impressões", tot.impressions.toLocaleString("pt-BR"))}
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:28px">
-      ${kpi("CTR", fPct(tot.ctr))}
-      ${kpi("CPM", fBRL(tot.cpm))}
-      ${kpi("CPC", fBRL(tot.cpc))}
-      ${kpi("Hook Rate", fPct(tot.hookRate), "Vídeo 3s / Impressões")}
-      ${kpi("Hold Rate", fPct(tot.holdRate), "Vídeo 15s / Vídeo 3s")}
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:18px">
+      ${kpiCard("Investimento",fBRL(tot.spend),"","var(--text-strong)")}
+      ${kpiCard("Visitas ao Perfil",tot.profileVisits.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Custo/Visita",cpVisitaV>0?fBRL(cpVisitaV):"—","meta "+fBRL(METAS_DIST.cpVisita.val),cpVisitaC,false,cpVisitaV||null,false)}
+      ${kpiCard("Seguidores",tot.seguidores.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Custo/Seguidor",tot.cps>0?fBRL(tot.cps):"—","meta "+fBRL(METAS_DIST.cpSeg.val),cpSegC,false,tot.cps||null,false)}
     </div>
 
-    <div class="section-lbl">Hoje — ${fDateBR(today)}</div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">
-      ${kpi("Investimento", fBRL(todayTot.spend))}
-      ${kpi("Seguidores ganhos", todayTot.seguidores.toLocaleString("pt-BR"))}
-      ${kpi("Custo/Seguidor", todayTot.cps>0?fBRL(todayTot.cps):"—")}
-      ${kpi("Visitas ao perfil", todayTot.profileVisits.toLocaleString("pt-BR"))}
-      ${kpi("Impressões", todayTot.impressions.toLocaleString("pt-BR"))}
+    <div class="cc" style="margin-bottom:12px;position:relative">
+      <div class="ch">
+        <span class="ct">Investimento × Custo/Seguidor</span>
+        <div class="lg">
+          <span class="li"><span class="ll" style="background:${CHART_INV}"></span>Invest. (esq.)</span>
+          <span class="li"><span class="ll" style="background:#f59e0b"></span>Custo/Seg. (dir.)</span>
+        </div>
+      </div>
+      <div style="position:relative"><canvas id="d-dual-cps"></canvas><div class="tip" id="d-tip-cps"></div></div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">
-      ${kpi("CTR", fPct(todayTot.ctr))}
-      ${kpi("CPM", fBRL(todayTot.cpm))}
-      ${kpi("CPC", fBRL(todayTot.cpc))}
-      ${kpi("Hook Rate", fPct(todayTot.hookRate), "Vídeo 3s / Impressões")}
-      ${kpi("Hold Rate", fPct(todayTot.holdRate), "Vídeo 15s / Vídeo 3s")}
+
+    <div class="cc" style="margin-bottom:12px">
+      <div class="ch">
+        <span class="ct">Volume de Seguidores</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:#34d399"></span>Seguidores/dia</span></div>
+      </div>
+      <canvas id="d-bar-seg"></canvas>
     </div>
+
+    <div class="cc" style="margin-bottom:12px;position:relative">
+      <div class="ch">
+        <span class="ct">Investimento × Custo/Visita ao Perfil</span>
+        <div class="lg">
+          <span class="li"><span class="ll" style="background:${CHART_INV}"></span>Invest. (esq.)</span>
+          <span class="li"><span class="ll" style="background:#f59e0b"></span>Custo/Visita (dir.)</span>
+        </div>
+      </div>
+      <div style="position:relative"><canvas id="d-dual-cpv"></canvas><div class="tip" id="d-tip-cpv"></div></div>
+    </div>
+
+    <div class="cc" style="margin-bottom:12px">
+      <div class="ch">
+        <span class="ct">Volume de Visitas ao Perfil</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:#60a5fa"></span>Visitas/dia</span></div>
+      </div>
+      <canvas id="d-bar-vis"></canvas>
+    </div>
+    <p class="foot">Base Distribuição + Base Seguidores</p>
   `;
+
+  requestAnimationFrame(()=>{
+    const mW=document.getElementById("d-dual-cps")?.parentElement?.offsetWidth||720;
+    const bW=document.getElementById("d-bar-seg")?.parentElement?.offsetWidth||720;
+    drawDistDual("d-dual-cps",daily,"cps",METAS_DIST.cpSeg.val,"Meta/Seg.",mW,200);
+    drawDistBar("d-bar-seg",daily,"seguidores","#34d399",v=>v.toLocaleString("pt-BR"),bW,150);
+    drawDistDual("d-dual-cpv",daily,"cpVisita",METAS_DIST.cpVisita.val,"Meta/Visita",mW,200);
+    drawDistBar("d-bar-vis",daily,"profileVisits","#60a5fa",v=>v.toLocaleString("pt-BR"),bW,150);
+    setupTip("d-dual-cps","d-tip-cps",daily,[
+      {key:"spend",color:CHART_INV,name:"Investimento"},
+      {key:"cps",color:"#f59e0b",name:"Custo/Seg.",fmt:fBRL},
+    ]);
+    setupTip("d-dual-cpv","d-tip-cpv",daily,[
+      {key:"spend",color:CHART_INV,name:"Investimento"},
+      {key:"cpVisita",color:"#f59e0b",name:"Custo/Visita",fmt:fBRL},
+    ]);
+  });
 }
 
 // ── Distribuição: Campanhas / Anúncios ───────────────────────────────────
@@ -3173,169 +3318,182 @@ function renderDistAnuncios(){
   const el=document.getElementById("page-anuncios"); if(!el)return;
   const start=S.startDate, end=S.endDate;
 
-  // Build camp rows filtered by date
+  // ── Build camp rows filtered by date ──────────────────────────────────────
   const campRows=Object.values(S.distMetaByCamp||{}).map(c=>{
-    // Re-aggregate for date range from ad-by-date
     let spend=0,clicks=0,impressions=0,video3s=0,video15s=0,profileVisits=0;
     for(const [adName,byDate] of Object.entries(S.distMetaByAdByDate||{})){
       const ad=S.distMetaByAd[adName];
       if(!ad||ad.campName!==c.campName) continue;
       for(const [d,v] of Object.entries(byDate)){
         if(d<start||d>end) continue;
-        spend+=v.spend; clicks+=v.clicks; impressions+=v.impressions;
-        video3s+=v.video3s; video15s+=v.video15s; profileVisits+=v.profileVisits;
+        spend+=v.spend;clicks+=v.clicks;impressions+=v.impressions;
+        video3s+=v.video3s;video15s+=v.video15s;profileVisits+=v.profileVisits;
       }
     }
     const seg=(S.distSegByCamp[c.campName]||{seguidores:0}).seguidores;
     const ctr=impressions>0?clicks/impressions*100:0;
     const cpm=impressions>0?spend/impressions*1000:0;
     const cpc=clicks>0?spend/clicks:0;
-    const hookRate=impressions>0?video3s/impressions*100:0;
-    const holdRate=video3s>0?video15s/video3s*100:0;
     const cps=seg>0?spend/seg:0;
-    return {campName:c.campName,spend,clicks,impressions,video3s,video15s,profileVisits,seguidores:seg,ctr,cpm,cpc,hookRate,holdRate,cps};
-  }).filter(r=>r.spend>0||r.impressions>0).sort((a,b)=>b.spend-a.spend);
+    const cpVisita=profileVisits>0?spend/profileVisits:0;
+    return {campName:c.campName,spend,clicks,impressions,profileVisits,seguidores:seg,ctr,cpm,cpc,cps,cpVisita};
+  }).filter(r=>r.spend>0).sort((a,b)=>b.spend-a.spend);
 
-  // Build ad rows filtered by date
+  const hasCampFilter=S.selectedCamps.size>0;
+  const filteredCamps=S.campSearch.trim()
+    ?campRows.filter(c=>c.campName.toLowerCase().includes(S.campSearch.trim().toLowerCase()))
+    :campRows;
+
+  // ── Build ad rows filtered by date + selected camps ────────────────────────
   const adRows=Object.values(S.distMetaByAd||{}).map(a=>{
+    if(hasCampFilter&&!S.selectedCamps.has(a.campName)) return null;
     let spend=0,clicks=0,impressions=0,video3s=0,video15s=0,profileVisits=0;
     const byDate=S.distMetaByAdByDate[a.adName]||{};
     for(const [d,v] of Object.entries(byDate)){
       if(d<start||d>end) continue;
-      spend+=v.spend; clicks+=v.clicks; impressions+=v.impressions;
-      video3s+=v.video3s; video15s+=v.video15s; profileVisits+=v.profileVisits;
+      spend+=v.spend;clicks+=v.clicks;impressions+=v.impressions;
+      video3s+=v.video3s;video15s+=v.video15s;profileVisits+=v.profileVisits;
     }
+    if(spend===0) return null;
     const seg=(S.distSegByAd[a.adName]||{seguidores:0}).seguidores;
     const ctr=impressions>0?clicks/impressions*100:0;
     const cpm=impressions>0?spend/impressions*1000:0;
     const cpc=clicks>0?spend/clicks:0;
-    const hookRate=impressions>0?video3s/impressions*100:0;
-    const holdRate=video3s>0?video15s/video3s*100:0;
     const cps=seg>0?spend/seg:0;
-    return {adName:a.adName,campName:a.campName,igUrl:a.igUrl,spend,clicks,impressions,video3s,video15s,profileVisits,seguidores:seg,ctr,cpm,cpc,hookRate,holdRate,cps};
-  }).filter(r=>r.spend>0||r.impressions>0).sort((a,b)=>b.spend-a.spend);
+    const cpVisita=profileVisits>0?spend/profileVisits:0;
+    return {adName:a.adName,campName:a.campName,spend,clicks,impressions,profileVisits,seguidores:seg,ctr,cpm,cpc,cps,cpVisita};
+  }).filter(Boolean).sort((a,b)=>b.spend-a.spend);
 
-  const thS="padding:8px 12px;text-align:right;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border);color:var(--hint);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap";
+  const filteredAds=S.adSearch.trim()
+    ?adRows.filter(a=>a.adName.toLowerCase().includes(S.adSearch.trim().toLowerCase()))
+    :adRows;
+
+  // ── KPI totals ─────────────────────────────────────────────────────────────
+  const tot=getDistTotals(start,end);
+  const cpVisitaV=tot.profileVisits>0?tot.spend/tot.profileVisits:0;
+
+  // ── Shared table styles ────────────────────────────────────────────────────
+  const thS="padding:8px 12px;text-align:right;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border);color:var(--hint);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;cursor:pointer";
   const thL="padding:8px 12px;text-align:left;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border);color:var(--hint);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em";
   const td="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);border-bottom:1px solid rgba(255,255,255,.04)";
   const tdL="padding:9px 12px;text-align:left;font-size:11px;color:var(--text);border-bottom:1px solid rgba(255,255,255,.04)";
 
-  function campTable(){
-    return `<table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr>
-        <th style="${thL}">Campanha</th>
-        <th style="${thS}">Invest.</th>
-        <th style="${thS}">Seguidores</th>
-        <th style="${thS}">Custo/Seg.</th>
-        <th style="${thS}">Visitas Perfil</th>
-        <th style="${thS}">Impressões</th>
-        <th style="${thS}">CTR</th>
-        <th style="${thS}">CPM</th>
-        <th style="${thS}">CPC</th>
-        <th style="${thS}">Hook Rate</th>
-        <th style="${thS}">Hold Rate</th>
-      </tr></thead>
-      <tbody>
-        ${campRows.map((r,i)=>`<tr style="background:${i%2?"rgba(255,255,255,.02)":"transparent"}">
-          <td style="${tdL}"><span style="font-size:10px;color:var(--text-strong)">${r.campName}</span></td>
-          <td style="${td}">${fBRL(r.spend)}</td>
-          <td style="${td};font-weight:600;color:var(--text-strong)">${r.seguidores||"—"}</td>
-          <td style="${td}">${r.cps>0?fBRL(r.cps):"—"}</td>
-          <td style="${td}">${r.profileVisits.toLocaleString("pt-BR")||"—"}</td>
-          <td style="${td}">${r.impressions.toLocaleString("pt-BR")}</td>
-          <td style="${td}">${fPct(r.ctr)}</td>
-          <td style="${td}">${fBRL(r.cpm)}</td>
-          <td style="${td}">${fBRL(r.cpc)}</td>
-          <td style="${td}">${fPct(r.hookRate)}</td>
-          <td style="${td}">${fPct(r.holdRate)}</td>
-        </tr>`).join("")}
-      </tbody>
-    </table>`;
-  }
-
-  function adTable(){
-    return `<table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr>
-        <th style="${thL}">Anúncio</th>
-        <th style="${thL}">Campanha</th>
-        <th style="${thS}">Invest.</th>
-        <th style="${thS}">Seguidores</th>
-        <th style="${thS}">Custo/Seg.</th>
-        <th style="${thS}">Visitas Perfil</th>
-        <th style="${thS}">Impressões</th>
-        <th style="${thS}">CTR</th>
-        <th style="${thS}">CPM</th>
-        <th style="${thS}">CPC</th>
-        <th style="${thS}">Hook Rate</th>
-        <th style="${thS}">Hold Rate</th>
-        <th style="${thS}">Link</th>
-      </tr></thead>
-      <tbody>
-        ${adRows.map((r,i)=>`<tr style="background:${i%2?"rgba(255,255,255,.02)":"transparent"}">
-          <td style="${tdL}" title="${r.adName}"><span style="background:var(--surf);border:1px solid var(--border-h);border-radius:5px;padding:2px 8px;font-size:10px;font-family:'JetBrains Mono',monospace">${r.adName.length>35?r.adName.slice(0,35)+"…":r.adName}</span></td>
-          <td style="${tdL}"><span style="font-size:10px;color:var(--hint)">${r.campName.replace(/distribuicao_etp\d+-/,"").slice(0,30)}</span></td>
-          <td style="${td}">${fBRL(r.spend)}</td>
-          <td style="${td};font-weight:600;color:var(--text-strong)">${r.seguidores||"—"}</td>
-          <td style="${td}">${r.cps>0?fBRL(r.cps):"—"}</td>
-          <td style="${td}">${r.profileVisits.toLocaleString("pt-BR")||"—"}</td>
-          <td style="${td}">${r.impressions.toLocaleString("pt-BR")}</td>
-          <td style="${td}">${fPct(r.ctr)}</td>
-          <td style="${td}">${fBRL(r.cpm)}</td>
-          <td style="${td}">${fBRL(r.cpc)}</td>
-          <td style="${td}">${fPct(r.hookRate)}</td>
-          <td style="${td}">${fPct(r.holdRate)}</td>
-          <td style="padding:9px 12px;text-align:center;border-bottom:1px solid rgba(255,255,255,.04)">${r.igUrl?`<a href="${r.igUrl}" target="_blank" style="color:var(--accent);font-size:11px;text-decoration:none">↗</a>`:"—"}</td>
-        </tr>`).join("")}
-      </tbody>
-    </table>`;
-  }
+  // Pre-compute rows HTML (avoids nested backtick issues inside template literals)
+  const _distCampHTML=filteredCamps.map((r,i)=>{
+    const sel=S.selectedCamps.has(r.campName);
+    const bg=sel?"rgba(59,130,246,.12)":i%2?"rgba(255,255,255,.02)":"transparent";
+    const bl=sel?"border-left:2px solid var(--accent)":"border-left:2px solid transparent";
+    const cn=r.campName.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const cj=JSON.stringify(r.campName);
+    return "<tr style=\"background:"+bg+";"+bl+";cursor:pointer\" onclick=\"toggleDistCamp("+cj+")\">"
+      +"<td style=\""+tdL+"\"><span style=\"font-size:10px;color:var(--text-strong)\">"+cn+"</span></td>"
+      +"<td style=\""+td+"\">"+fBRL(r.spend)+"</td>"
+      +"<td style=\""+td+"\">"+r.profileVisits.toLocaleString("pt-BR")+"</td>"
+      +"<td style=\""+td+"\">"+(r.cpVisita>0?fBRL(r.cpVisita):"—")+"</td>"
+      +"<td style=\""+td+";font-weight:600;color:var(--text-strong)\">"+(r.seguidores||"—")+"</td>"
+      +"<td style=\""+td+"\">"+(r.cps>0?fBRL(r.cps):"—")+"</td>"
+      +"<td style=\""+td+"\">"+fPct(r.ctr)+"</td>"
+      +"<td style=\""+td+"\">"+fBRL(r.cpm)+"</td>"
+      +"</tr>";
+  }).join("");
+  const _distAdHTML=filteredAds.map((r,i)=>{
+    const bg=i%2?"rgba(255,255,255,.02)":"transparent";
+    const nm=(r.adName.length>50?r.adName.slice(0,50)+"…":r.adName).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const tt=r.adName.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
+    const camp=r.campName.slice(0,40).replace(/&/g,"&amp;");
+    return "<tr style=\"background:"+bg+"\">"
+      +"<td style=\""+tdL+"\" title=\""+tt+"\"><div style=\"font-size:10px;font-family:'JetBrains Mono',monospace;background:var(--surf);border:1px solid var(--border-h);border-radius:5px;padding:2px 8px;display:inline-block;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">"+nm+"</div><div style=\"font-size:10px;color:var(--hint);margin-top:2px\">"+camp+"</div></td>"
+      +"<td style=\""+td+"\">"+fBRL(r.spend)+"</td>"
+      +"<td style=\""+td+"\">"+r.profileVisits.toLocaleString("pt-BR")+"</td>"
+      +"<td style=\""+td+"\">"+(r.cpVisita>0?fBRL(r.cpVisita):"—")+"</td>"
+      +"<td style=\""+td+";font-weight:600;color:var(--text-strong)\">"+(r.seguidores||"—")+"</td>"
+      +"<td style=\""+td+"\">"+(r.cps>0?fBRL(r.cps):"—")+"</td>"
+      +"<td style=\""+td+"\">"+fPct(r.ctr)+"</td>"
+      +"<td style=\""+td+"\">"+fBRL(r.cpm)+"</td>"
+      +"</tr>";
+  }).join("");
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
-        <div class="hdr-title">Campanhas &amp; Anúncios — Distribuição</div>
-        <div class="hdr-sub">${fDateBR(start)} → ${fDateBR(end)}</div>
+        <div class="hdr-title">Campanhas / Anúncios — Distribuição</div>
+        <div class="hdr-sub">atualizado em: ${fDateBR(todayISO())} · ${campRows.length} campanhas · ${adRows.length} anúncios</div>
       </div>
     </div>
 
-    <div class="section-lbl" style="margin-bottom:10px">Por Campanha</div>
-    <div style="overflow-x:auto;margin-bottom:28px">${campTable()}</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:20px">
+      ${kpiCard("Investimento",fBRL(tot.spend),"","var(--text-strong)")}
+      ${kpiCard("Visitas ao Perfil",tot.profileVisits.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Seguidores",tot.seguidores.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Custo/Seguidor",tot.cps>0?fBRL(tot.cps):"—",tot.cps>0?"meta "+fBRL(METAS_DIST.cpSeg.val):"",tot.cps>0?statusColor(tot.cps,METAS_DIST.cpSeg.val,false):"var(--text-strong)",false,tot.cps||null,false)}
+    </div>
 
-    <div class="section-lbl" style="margin-bottom:10px">Por Anúncio</div>
-    <div style="overflow-x:auto">${adTable()}</div>
+    <div style="color:var(--hint);font-size:11px;margin-bottom:6px">Clique para filtrar anúncios${hasCampFilter?' · <a href="#" onclick="S.selectedCamps=new Set();render();return false" style="color:var(--accent)">Limpar filtro</a>':''}</div>
+    <div style="margin-bottom:8px">
+      <input value="${S.campSearch}" oninput="S.campSearch=this.value;render()" placeholder="Buscar campanha..."
+        style="width:100%;padding:8px 14px;background:var(--surf);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+    </div>
+    <div style="overflow-x:auto;margin-bottom:28px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>
+          <th style="${thL}">Campanha</th>
+          <th style="${thS}">Investimento</th>
+          <th style="${thS}">Visitas ↑</th>
+          <th style="${thS}">Custo/Visita</th>
+          <th style="${thS}">Seguidores</th>
+          <th style="${thS}">Custo/Seg.</th>
+          <th style="${thS}">CTR</th>
+          <th style="${thS}">CPM</th>
+        </tr></thead>
+        <tbody>${_distCampHTML}</tbody>
+      </table>
+    </div>
+
+    <div style="color:var(--hint);font-size:11px;margin-bottom:6px">Anúncios${hasCampFilter?" (filtrados pelas campanhas selecionadas)":""}</div>
+    <div style="margin-bottom:8px">
+      <input value="${S.adSearch}" oninput="S.adSearch=this.value;render()" placeholder="Buscar anúncio..."
+        style="width:100%;padding:8px 14px;background:var(--surf);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>
+          <th style="${thL}">Anúncio</th>
+          <th style="${thS}">Invest. ↓</th>
+          <th style="${thS}">Visitas</th>
+          <th style="${thS}">Custo/Visita</th>
+          <th style="${thS}">Seguidores</th>
+          <th style="${thS}">Custo/Seg.</th>
+          <th style="${thS}">CTR</th>
+          <th style="${thS}">CPM</th>
+        </tr></thead>
+        <tbody>${_distAdHTML}</tbody>
+      </table>
+    </div>
   `;
-}
 
+  // Restore search focus
+  const _f=document.activeElement?.id;
+  if(_f==="dist-camp-search"||_f==="dist-ad-search") requestAnimationFrame(()=>document.getElementById(_f)?.focus());
+}
 
 // ── Distribuição: Resumo ──────────────────────────────────────────────────
 function renderDistResumo(){
   const el=document.getElementById("page-resumo"); if(!el)return;
+  const _resumoFocus=document.activeElement?.id;
   const today=todayISO(), yest=yesterdayISO();
   const start=S.startDate||today, end=S.endDate||today;
 
-  // Metas distribuição
-  const METAS_DIST={
-    cpVisita:  {val:0.05,  higher:false, label:"$0,05"},
-    cpSeg:     {val:1.03,  higher:false, label:"$1,03"},
-    txConv:    {val:5.27,  higher:true,  label:"5,27%"},
-    hookRate:  {val:25.56, higher:true,  label:"25,56%"},
-    holdRate:  {val:29.02, higher:true,  label:"29,02%"},
-    cpc:       {val:0.05,  higher:false, label:"$0,05"},
-    ctr:       {val:2.68,  higher:true,  label:"2,68%"},
-    cpm:       {val:1.34,  higher:false, label:"$1,34"},
-  };
-
   function fD(v){ return "$"+v.toFixed(2).replace(".",","); }
-  function fP(v){ return v.toFixed(2).replace(".",",")+"%"; }
+  function fP(v){ return v.toFixed(1).replace(".",",")+"%"; }
   function fN(v){ return v===0?"0":v.toLocaleString("pt-BR"); }
-  function dot(val, meta){
-    if(val===null||val===undefined) return "🔴";
-    return meta.higher ? (val>=meta.val?"🟢":"🔴") : (val<=meta.val?"🟢":"🔴");
-  }
-  function line(label, val, fmtFn, meta, pad){
-    const v = val===null ? "#DIV/0!" : fmtFn(val);
-    const m = meta ? `\t${val===null?"#DIV/0!":dot(val,meta)} Meta: ${meta.label}` : "";
-    return `${label.padEnd(pad||38," ")}${v}${m}`;
+  function fDM(iso){ if(!iso)return "—"; const [,m,d]=iso.split("-"); return `${d}/${m}`; }
+
+  function em(val, meta){
+    if(!val||val===0) return "";
+    const ratio=meta.higher?val/meta.val:meta.val/val;
+    if(ratio>=1)   return "🟢";
+    if(ratio>=0.85)return "🟡";
+    return "🔴";
   }
 
   function distMetrics(s, e){
@@ -3343,8 +3501,8 @@ function renderDistResumo(){
     let spend=0,clicks=0,impressions=0,video3s=0,video15s=0,profileVisits=0;
     for(const [d,v] of Object.entries(dD)){
       if(d<s||d>e) continue;
-      spend+=v.spend; clicks+=v.clicks; impressions+=v.impressions;
-      video3s+=v.video3s; video15s+=v.video15s; profileVisits+=v.profileVisits;
+      spend+=v.spend;clicks+=v.clicks;impressions+=v.impressions;
+      video3s+=v.video3s;video15s+=v.video15s;profileVisits+=v.profileVisits;
     }
     const sD=S.distSeg||{};
     let seguidores=0;
@@ -3360,60 +3518,125 @@ function renderDistResumo(){
     const cpVisita=profileVisits>0?spend/profileVisits:null;
     const cpSeg=seguidores>0?spend/seguidores:null;
     const txConv=profileVisits>0?seguidores/profileVisits*100:null;
-    return {spend,clicks,impressions,video3s,video15s,profileVisits,seguidores,ctr,cpm,cpc,hookRate,holdRate,cpVisita,cpSeg,txConv};
+    return {spend,clicks,impressions,profileVisits,seguidores,ctr,cpm,cpc,hookRate,holdRate,cpVisita,cpSeg,txConv};
   }
 
-  function block(label, s, e){
-    const m=distMetrics(s,e);
-    const lines=[
-      `📶 *${label}*`,
-      ``,
+  const tot  =distMetrics(start,end);
+  const ontem=distMetrics(yest,yest);
+  const hoje =distMetrics(today,today);
+
+  const dateLabel=start===end?fDM(start):`${fDM(start)} a ${fDM(end)}`;
+
+  // ── Text for copy ─────────────────────────────────────────────────────────
+  function textBlock(label, m){
+    function line(lbl, val, fmtFn, meta, pad=42){
+      const v=val===null?"#DIV/0!":fmtFn(val);
+      const dot=meta?(val===null?"":"\t"+(em(val,meta)||"🔴")+" Meta: "+meta.label):"";
+      return `${lbl.padEnd(pad," ")}${v}${dot}`;
+    }
+    return [
+      `📶 *${label}*`,``,
       line("Investimento:",         m.spend,       fD,  null),
-      line("Visitas ao Perfil:",     m.profileVisits, fN, null),
-      line("Custo por visita ao perfil:", m.cpVisita, fD, METAS_DIST.cpVisita),
-      line("Seguidores:",            m.seguidores,  fN,  null),
-      line("Custo por Seguidor:",    m.cpSeg,       fD,  METAS_DIST.cpSeg),
-      ``,
-      line("Tx de conversao de seguidores:", m.txConv, fP, METAS_DIST.txConv),
-      ``,
-      line("hook rate (viu 3s / impressões):", m.hookRate, fP, METAS_DIST.hookRate),
-      line("hold rate (viu 15s / viu 3s):",    m.holdRate, fP, METAS_DIST.holdRate),
-      line("CPC:",     m.cpc,      fD, METAS_DIST.cpc),
-      line("CTR:",     m.ctr,      fP, METAS_DIST.ctr),
-      line("CPM:",     m.cpm,      fD, METAS_DIST.cpm),
-    ];
-    return lines.join("\n");
+      line("Visitas ao Perfil:",    m.profileVisits, fN, null),
+      line("Custo/Visita:",         m.cpVisita,    fD,  METAS_DIST.cpVisita),
+      line("Seguidores:",           m.seguidores,  fN,  null),
+      line("Custo/Seguidor:",       m.cpSeg,       fD,  METAS_DIST.cpSeg),``,
+      line("Hook Rate (3s/impr.):", m.hookRate,    fP,  METAS_DIST.hookRate),
+      line("Hold Rate (15s/3s):",   m.holdRate,    fP,  METAS_DIST.holdRate),
+    ].join("\n");
   }
 
-  const periodLabel=start===end?fDateBR(start):`${fDateBR(start)} a ${fDateBR(end)}`;
   const fullText=[
-    `*Finanzas con proposito - distribuição*`,
-    ``,
-    `_${periodLabel}_`,
-    ``,
-    block("Total", start, end),
-    ``,
-    ``,
-    block("Ontem", yest, yest),
-    ``,
-    ``,
-    block("Hoje", today, today),
+    `*Finanzas - Distribuição de Conteúdo*`,``,
+    `_${dateLabel}_`,``,
+    textBlock("Total",start===end?fDM(start):`${fDM(start)} a ${fDM(end)}`,tot),``,``,
+    textBlock("Ontem",ontem),``,``,
+    textBlock("Hoje",hoje),
   ].join("\n");
 
+  // ── Visual rows ───────────────────────────────────────────────────────────
+  function row(lbl, val, fmtFn, meta){
+    const fv=val===null?"—":(typeof val==="number"?fmtFn(val):val);
+    const badge=meta?em(val,meta):"";
+    const metaTxt=meta&&val!==null?`<span style="font-size:10px;color:var(--hint);margin-left:4px">meta ${meta.label}</span>`:"";
+    return `<div style="display:grid;grid-template-columns:180px 1fr auto;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+      <span style="color:var(--muted);font-size:12px">${lbl}</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-strong)">${fv}</span>
+      <span style="font-size:13px;min-width:28px;text-align:right">${badge}${metaTxt}</span>
+    </div>`;
+  }
+
+  function section(label, m, isHoje=false){
+    const planRow=isHoje?`
+      <div style="display:grid;grid-template-columns:180px 1fr;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
+        <span style="color:var(--muted);font-size:12px">Plan até hj</span>
+        <input id="dist-plan-input"
+          value="${S.distPlanHoje||''}"
+          placeholder="Digitar plan..."
+          oninput="S.distPlanHoje=this.value;renderDistResumo()"
+          style="background:var(--surf);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:3px 8px;outline:none;width:100%;box-sizing:border-box">
+      </div>`:"";
+    return `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px">
+      <div style="font-size:13px;font-weight:700;color:var(--text-strong);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">📶 ${label}</div>
+      ${row("Investimento", m.spend, fD, null)}
+      ${row("Visitas ao Perfil", m.profileVisits, fN, null)}
+      ${row("Custo/Visita", m.cpVisita, fD, METAS_DIST.cpVisita)}
+      ${row("Seguidores", m.seguidores, fN, null)}
+      ${row("Custo/Seguidor", m.cpSeg, fD, METAS_DIST.cpSeg)}
+      <div style="height:8px"></div>
+      ${row("Hook Rate", m.hookRate, fP, METAS_DIST.hookRate)}
+      ${row("Hold Rate", m.holdRate, fP, METAS_DIST.holdRate)}
+      ${planRow}
+    </div>`;
+  }
+
   el.innerHTML=`
-    <div class="hdr" style="margin-bottom:12px">
+    <div class="hdr" style="margin-bottom:16px">
       <div>
-        <div class="hdr-title">Resumo — Distribuição de Conteúdo</div>
-        <div class="hdr-sub">${fDateBR(start)} → ${fDateBR(end)}</div>
+        <div class="hdr-title">Resumo diário — Distribuição</div>
+        <div class="hdr-sub">período: ${dateLabel} · ontem: ${fDM(yest)} · hoje: ${fDM(today)}</div>
       </div>
-      <button onclick="(()=>{const t=document.getElementById('dist-resumo-pre')._text;navigator.clipboard.writeText(t).then(()=>{const b=document.getElementById('dist-copy-btn');b.textContent='✅ Copiado!';setTimeout(()=>b.textContent='📋 Copiar',2000);})})()" id="dist-copy-btn"
-        style="padding:8px 16px;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.3);color:#60a5fa;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">
-        📋 Copiar
+      <button id="dist-copy-btn" onclick="distCopyResumo()"
+        style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;background:rgba(59,130,246,.18);border:1px solid rgba(96,165,250,.35);color:#93c5fd;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif">
+        📋 Copiar resumo
       </button>
     </div>
-    <pre id="dist-resumo-pre" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px 24px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text);white-space:pre-wrap;line-height:1.7;tab-size:4">${fullText.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:20px;align-items:start">
+      <div>
+        ${section("Total", tot, false)}
+        ${section("Ontem", ontem, false)}
+        ${section("Hoje", hoje, true)}
+      </div>
+      <div style="position:sticky;top:20px">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px">Preview</div>
+          <pre id="dist-resumo-pre" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);white-space:pre-wrap;line-height:1.75;margin:0;user-select:all">${fullText.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+        </div>
+      </div>
+    </div>
+    <p class="foot">Ontem e Hoje são sempre datas fixas · Total reflete o filtro de datas do header</p>
   `;
+
   document.getElementById("dist-resumo-pre")._text=fullText;
+
+  if(_resumoFocus==="dist-plan-input"){
+    requestAnimationFrame(()=>{
+      const inp=document.getElementById("dist-plan-input");
+      if(inp){inp.focus();const l=inp.value.length;inp.setSelectionRange(l,l);}
+    });
+  }
+}
+
+function distCopyResumo(){
+  const pre=document.getElementById("dist-resumo-pre");
+  const text=pre?._text||"";
+  if(!text)return;
+  navigator.clipboard.writeText(text).then(()=>{
+    const b=document.getElementById("dist-copy-btn");
+    if(b){const o=b.innerHTML;b.innerHTML="✓ Copiado!";b.style.color="#4ade80";setTimeout(()=>{b.innerHTML=o;b.style.color="";},1800);}
+  }).catch(()=>alert("Selecione o texto manualmente."));
 }
 
 render();
