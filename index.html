@@ -1551,7 +1551,7 @@ function renderTrafego(){
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
             <tr>
-              ${["Plataforma","Investimento","Vendas","CPV","Receita"].map(h=>`<th style="padding:7px 12px;text-align:${h==="Plataforma"?"left":"right"};background:var(--surf);border-bottom:1px solid var(--border);color:var(--hint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px">${h}</th>`).join("")}
+              ${["Plataforma","Investimento","Vendas","CPV","Faturamento","ROAS"].map(h=>`<th style="padding:7px 12px;text-align:${h==="Plataforma"?"left":"right"};background:var(--surf);border-bottom:1px solid var(--border);color:var(--hint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px">${h}</th>`).join("")}
             </tr>
           </thead>
           <tbody>
@@ -1566,17 +1566,16 @@ function renderTrafego(){
                 const m=mp[p]||{spend:0};
                 const v=vp[p]||{qtd:0,valor:0};
                 const cpv=v.qtd>0?m.spend/v.qtd:0;
+                const roas=m.spend>0?v.valor/m.spend:0;
                 const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
                 const dot={instagram:"#e1306c",facebook:"#1877f2",audience_network:"#a259ff",messenger:"#00b2ff",threads:"#000"}[p]||"var(--hint)";
                 return `<tr style="background:${bg}">
-                  <td style="padding:8px 12px;color:var(--text);display:flex;align-items:center;gap:7px">
-                    <span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block;flex-shrink:0"></span>
-                    ${labels[p]||p}
-                  </td>
+                  <td style="padding:8px 12px;color:var(--text)"><span style="display:inline-flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0"></span>${labels[p]||p}</span></td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${m.spend>0?fBRL(m.spend):"—"}</td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text-strong);font-weight:600">${v.qtd||"—"}</td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${cpv>0?fBRL(cpv):"—"}</td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${v.valor>0?fBRL(v.valor):"—"}</td>
+                  <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:${roas>=1?"#22c55e":roas>0?"#f59e0b":"var(--hint)"};font-weight:600">${roas>0?roas.toFixed(2)+"x":"—"}</td>
                 </tr>`;
               }).join("");
             })()}
@@ -1590,40 +1589,49 @@ function renderTrafego(){
         <table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead>
             <tr>
-              ${["Formato","Plataforma","Vendas","Receita","%"].map(h=>`<th style="padding:7px 12px;text-align:${h==="Formato"?"left":"right"};background:var(--surf);border-bottom:1px solid var(--border);color:var(--hint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px">${h}</th>`).join("")}
+              ${["Formato","Plataforma","Vendas","CPV","Faturamento","ROAS"].map(h=>`<th style="padding:7px 12px;text-align:${h==="Formato"||h==="Plataforma"?"left":"right"};background:var(--surf);border-bottom:1px solid var(--border);color:var(--hint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px">${h}</th>`).join("")}
             </tr>
           </thead>
           <tbody>
             ${(()=>{
               const vpl=S.vendasByPlacement||{};
-              const total=Object.values(vpl).reduce((s,v)=>s+v.qtd,0)||1;
+              const mp=S.metaByPlatform||{};
+              const vp=S.vendasByPlatform||{};
               const sorted=Object.entries(vpl).sort((a,b)=>b[1].qtd-a[1].qtd);
               const fmtLabel=pl=>{
                 const p=pl.toLowerCase();
-                if(p.includes("reel"))  return "Reels";
-                if(p.includes("feed"))  return "Feed";
-                if(p.includes("storie"))return "Stories";
+                if(p.includes("reel"))    return "Reels";
+                if(p.includes("feed"))    return "Feed";
+                if(p.includes("storie"))  return "Stories";
                 if(p.includes("instream"))return "In-stream Video";
-                if(p.includes("explore"))return "Explore";
+                if(p.includes("explore")) return "Explore";
                 return pl.replace(/_/g," ");
               };
-              const platOf=pl=>{
+              const platKey=pl=>{
                 const p=pl.toLowerCase();
-                if(p.includes("instagram"))return "Instagram";
-                if(p.includes("facebook")) return "Facebook";
-                if(p.includes("messenger"))return "Messenger";
+                if(p.includes("instagram"))return "instagram";
+                if(p.includes("facebook")) return "facebook";
+                if(p.includes("messenger"))return "messenger";
                 return "";
               };
-              const dot=pl=>{const p=pl.toLowerCase();return p.includes("instagram")?"#e1306c":p.includes("facebook")?"#1877f2":"var(--hint)";};
+              const platLabel=pl=>{const m={instagram:"Instagram",facebook:"Facebook",messenger:"Messenger"};return m[pl]||pl;};
+              const dotColor=pl=>pl==="instagram"?"#e1306c":pl==="facebook"?"#1877f2":"var(--hint)";
               return sorted.map(([pl,v],i)=>{
+                const pk=platKey(pl);
+                const platSpend=(mp[pk]||{spend:0}).spend;
+                const platQtd=(vp[pk]||{qtd:0}).qtd;
+                const estSpend=platQtd>0?(v.qtd/platQtd)*platSpend:0;
+                const cpv=v.qtd>0&&estSpend>0?estSpend/v.qtd:0;
+                const roas=estSpend>0?v.valor/estSpend:0;
                 const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
-                const pct=(v.qtd/total*100).toFixed(1);
+                const dc=dotColor(pk);
                 return `<tr style="background:${bg}">
                   <td style="padding:8px 12px;color:var(--text)">${fmtLabel(pl)}</td>
-                  <td style="padding:8px 12px;text-align:right"><span style="font-size:10px;padding:2px 7px;border-radius:10px;background:${dot(pl)}22;color:${dot(pl)}">${platOf(pl)}</span></td>
+                  <td style="padding:8px 12px"><span style="font-size:10px;padding:2px 7px;border-radius:10px;background:${dc}22;color:${dc}">${platLabel(pk)}</span></td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text-strong);font-weight:600">${v.qtd}</td>
+                  <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${cpv>0?fBRL(cpv):"—"}</td>
                   <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${fBRL(v.valor)}</td>
-                  <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--hint)">${pct}%</td>
+                  <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:${roas>=1?"#22c55e":roas>0?"#f59e0b":"var(--hint)"};font-weight:600">${roas>0?roas.toFixed(2)+"x":"—"}</td>
                 </tr>`;
               }).join("");
             })()}
@@ -1632,7 +1640,7 @@ function renderTrafego(){
       </div>
 
     </div>
-    <p class="foot">Base Meta (Stract) + Base Vendas (Eduzz) · Google Sheets API v4</p>`;
+        <p class="foot">Base Meta (Stract) + Base Vendas (Eduzz) · Google Sheets API v4</p>`;
 
   requestAnimationFrame(()=>{
     const sW=document.getElementById(`tc-${CHART_CONFIGS[0].key}`)?.parentElement?.offsetWidth||500;
