@@ -3822,47 +3822,78 @@ function renderAquecPrincipal(){
   const cpVisitaC=cpVisitaV>0?statusColor(cpVisitaV,METAS_AQUEC.cpVisita.val||999,false):"var(--text-strong)";
   const cpSegC=tot.cps>0?statusColor(tot.cps,METAS_AQUEC.cpSeg.val||999,false):"var(--text-strong)";
 
-  const mW=Math.min(window.innerWidth-40,900);
-
   el.innerHTML=`
-  <div class="hdr" style="margin-bottom:16px">
-    <div>
-      <div class="hdr-title">Aquecimento Base — Principal</div>
-      <div class="hdr-sub">período: ${start} a ${end} · hoje: ${today}</div>
+    <div class="hdr" style="margin-bottom:6px">
+      <div>
+        <div class="hdr-title">Finanzas — Aquecimento Base</div>
+        <div class="hdr-sub">atualizado em: ${fDateBR(today)} · ${daily.length} dias</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
     </div>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px">
-    ${kpiCard("Investimento",fBRL(tot.spend),"total período","var(--text-strong)",false,tot.spend||null,false)}
-    ${kpiCard("Visitas ao Perfil",tot.profileVisits.toLocaleString("pt-BR"),"total período","var(--text-strong)",false,tot.profileVisits||null,false)}
-    ${kpiCard("Custo/Visita",cpVisitaV>0?fBRL(cpVisitaV):"—","meta "+METAS_AQUEC.cpVisita.label,cpVisitaC,false,cpVisitaV||null,false)}
-    ${kpiCard("Seguidores",tot.seguidores.toLocaleString("pt-BR"),"total período","var(--text-strong)",false,tot.seguidores||null,false)}
-    ${kpiCard("Custo/Seguidor",tot.cps>0?fBRL(tot.cps):"—","meta "+METAS_AQUEC.cpSeg.label,cpSegC,false,tot.cps||null,false)}
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Custo/Seguidor diário</div>
-      <canvas id="a-dual-cps"></canvas>
+
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:18px">
+      ${kpiCard("Investimento",fBRL(tot.spend),"","var(--text-strong)")}
+      ${kpiCard("Visitas ao Perfil",tot.profileVisits.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Custo/Visita",cpVisitaV>0?fBRL(cpVisitaV):"—","meta "+METAS_AQUEC.cpVisita.label,cpVisitaC,false,cpVisitaV||null,false)}
+      ${kpiCard("Seguidores",tot.seguidores.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Custo/Seguidor",tot.cps>0?fBRL(tot.cps):"—","meta "+METAS_AQUEC.cpSeg.label,cpSegC,false,tot.cps||null,false)}
     </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Seguidores diários</div>
+
+    <div class="cc" style="margin-bottom:12px;position:relative">
+      <div class="ch">
+        <span class="ct">Investimento × Custo/Seguidor</span>
+        <div class="lg">
+          <span class="li"><span class="ll" style="background:${CHART_INV}"></span>Invest. (esq.)</span>
+          <span class="li"><span class="ll" style="background:#f59e0b"></span>Custo/Seg. (dir.)</span>
+        </div>
+      </div>
+      <div style="position:relative"><canvas id="a-dual-cps"></canvas><div class="tip" id="a-tip-cps"></div></div>
+    </div>
+
+    <div class="cc" style="margin-bottom:12px">
+      <div class="ch">
+        <span class="ct">Volume de Seguidores</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:#34d399"></span>Seguidores/dia</span></div>
+      </div>
       <canvas id="a-bar-seg"></canvas>
     </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Custo/Visita diário</div>
-      <canvas id="a-dual-cpv"></canvas>
+
+    <div class="cc" style="margin-bottom:12px;position:relative">
+      <div class="ch">
+        <span class="ct">Investimento × Custo/Visita ao Perfil</span>
+        <div class="lg">
+          <span class="li"><span class="ll" style="background:${CHART_INV}"></span>Invest. (esq.)</span>
+          <span class="li"><span class="ll" style="background:#f59e0b"></span>Custo/Visita (dir.)</span>
+        </div>
+      </div>
+      <div style="position:relative"><canvas id="a-dual-cpv"></canvas><div class="tip" id="a-tip-cpv"></div></div>
     </div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Visitas ao Perfil diárias</div>
+
+    <div class="cc" style="margin-bottom:12px">
+      <div class="ch">
+        <span class="ct">Volume de Visitas ao Perfil</span>
+        <div class="lg"><span class="li"><span class="ld" style="background:#60a5fa"></span>Visitas/dia</span></div>
+      </div>
       <canvas id="a-bar-vis"></canvas>
     </div>
-  </div>`;
+    <p class="foot">Base Aquecimento Morno + Base Aquecimento Seguidores</p>
+  `;
 
   requestAnimationFrame(()=>{
-    const cW=Math.floor((mW-16)/2);
-    drawDistDual("a-dual-cps",daily,"cps",METAS_AQUEC.cpSeg.val||null,"Meta/Seg.",cW,200);
-    drawDistBar("a-bar-seg",daily,"seguidores","#34d399",v=>v.toLocaleString("pt-BR"),cW,200);
-    drawDistDual("a-dual-cpv",daily,"cpVisita",METAS_AQUEC.cpVisita.val||null,"Meta/Visita",cW,200);
-    drawDistBar("a-bar-vis",daily,"profileVisits","#60a5fa",v=>v.toLocaleString("pt-BR"),cW,200);
+    const mW=document.getElementById("a-dual-cps")?.parentElement?.offsetWidth||720;
+    const bW=document.getElementById("a-bar-seg")?.parentElement?.offsetWidth||720;
+    drawDistDual("a-dual-cps",daily,"cps",METAS_AQUEC.cpSeg.val||null,"Meta/Seg.",mW,200);
+    drawDistBar("a-bar-seg",daily,"seguidores","#34d399",v=>v.toLocaleString("pt-BR"),bW,150);
+    drawDistDual("a-dual-cpv",daily,"cpVisita",METAS_AQUEC.cpVisita.val||null,"Meta/Visita",mW,200);
+    drawDistBar("a-bar-vis",daily,"profileVisits","#60a5fa",v=>v.toLocaleString("pt-BR"),bW,150);
+    setupTip("a-dual-cps","a-tip-cps",daily,[
+      {key:"spend",color:CHART_INV,name:"Investimento"},
+      {key:"cps",color:"#f59e0b",name:"Custo/Seg.",fmt:fBRL},
+    ]);
+    setupTip("a-dual-cpv","a-tip-cpv",daily,[
+      {key:"spend",color:CHART_INV,name:"Investimento"},
+      {key:"cpVisita",color:"#f59e0b",name:"Custo/Visita",fmt:fBRL},
+    ]);
   });
 }
 
