@@ -253,19 +253,23 @@ const S = {
   meta:{},            // date -> {spend,clicks,impressions,landingViews,checkouts}
   metaByAdv:{},        // advCode -> {advCode,adName,campName,adStatus,campStatus,adsetStatus,spend,clicks,impressions,checkouts,byDate:{}}
   metaByPlatform:{},   // "Instagram (Ads)"/"Facebook (Ads)" -> {spend,clicks,impressions}
-  vendas:{},           // date -> {qtd,valor}  (produto principal)
-  vendasByAdv:{},      // advCode -> {qtd,valor}
+  vendas:{},           // date -> {qtd,valor}  (produto principal, SOMENTE tráfego pago)
+  vendasOrganico:{},   // date -> {qtd,valor}  (produto principal, SOMENTE orgânico/direto)
+  vendasByAdv:{},      // advCode -> {qtd,valor}  (tráfego pago atribuído)
   vendasByAdvDate:{},  // advCode -> date -> {qtd,valor}
   vendasByPlatform:{}, // label -> {qtd,valor}
   vendasByFormat:{},   // label -> {qtd,valor,platform}
   upsell:{},           // date -> {qtd,valor}  (ex: Gravação — order bump/upsell)
   upsellName:"Upsell",
+  comprasPrincipal:[], // [{date,email,valor,canal}] — para cálculos da aba Funil (tráfego+orgânico)
+  comprasUpsell:[],    // [{date,email,valor}]
   productName:"Produto",
   updated:null, loading:true, error:null, firstLoad:true,
   startDate:nDaysAgoISO(29), endDate:todayISO(), activeQuick:"30d",
   overlays:{cpc:{inv:false,cpv:false},ctr:{inv:false,cpv:false},cpm:{inv:false,cpv:false},
     txPagChk:{inv:false,cpv:false},txChkVnd:{inv:false,cpv:false},connect:{inv:false,cpv:false}},
   aSort:{col:"spend",dir:"desc"}, adSearch:"",
+  cSort:{col:"spend",dir:"desc"}, campSearch:"",
   manualSpendHoje:null,
   currentPage:"principal",
 };
@@ -459,41 +463,52 @@ async function loadData(force=false){
     // ── Base compradores (vendas) ───────────────────────────────────────────
     // Produto principal (qualquer nome de oferta, ex: "Imersão O Fim do Ciclo" / "Imersão O Chamado")
     // é tratado como a mesma oferta. "Gravação" é upsell/order bump e fica separado.
-    const vD={}, vByAdv={}, vByAdvDate={}, vByPlatform={}, vByFormat={};
+    // Cada venda do produto principal é classificada em "tráfego" (SCK de anúncio pago)
+    // ou "orgânico" (demais SCK). S.vendas = tráfego (usado no ROAS/CPV/Tráfego/Resumo);
+    // S.vendasOrganico = orgânico (só aparece no gráfico dedicado e na aba Funil).
+    const vD={}, vOrg={}, vByAdv={}, vByAdvDate={}, vByPlatform={}, vByFormat={};
     const uD={};
+    const comprasPrincipal=[], comprasUpsell=[];
     let lastISO="", productName="", upsellName="";
     for(const raw of parseSheet(compJ)){
       const d=toISO(raw["Data da compra"]); if(!d) continue;
       const valor=parseBRL(raw["Valor"]);
       const produto=raw["Produto"]||"";
       const classe=classifyProduct(produto);
+      const email=(raw["Email"]||"").toLowerCase().trim();
       if(d>lastISO) lastISO=d;
 
       if(classe==="upsell"){
         if(!upsellName && produto) upsellName=produto;
         if(!uD[d]) uD[d]={qtd:0,valor:0};
         uD[d].qtd+=1; uD[d].valor+=valor;
+        comprasUpsell.push({date:d,email,valor});
         continue;
       }
       if(!productName && produto) productName=produto;
-      if(!vD[d]) vD[d]={qtd:0,valor:0};
-      vD[d].qtd+=1; vD[d].valor+=valor;
 
       const info=parseSCK(raw["SCK"]||"");
-      if(info.paid && info.advCode){
-        if(!vByAdv[info.advCode]) vByAdv[info.advCode]={qtd:0,valor:0};
-        vByAdv[info.advCode].qtd+=1; vByAdv[info.advCode].valor+=valor;
-        if(!vByAdvDate[info.advCode]) vByAdvDate[info.advCode]={};
-        if(!vByAdvDate[info.advCode][d]) vByAdvDate[info.advCode][d]={qtd:0,valor:0};
-        vByAdvDate[info.advCode][d].qtd+=1; vByAdvDate[info.advCode][d].valor+=valor;
+      comprasPrincipal.push({date:d,email,valor,canal:info.paid?"trafego":"organico"});
 
+      if(info.paid){
+        if(!vD[d]) vD[d]={qtd:0,valor:0};
+        vD[d].qtd+=1; vD[d].valor+=valor;
+        if(info.advCode){
+          if(!vByAdv[info.advCode]) vByAdv[info.advCode]={qtd:0,valor:0};
+          vByAdv[info.advCode].qtd+=1; vByAdv[info.advCode].valor+=valor;
+          if(!vByAdvDate[info.advCode]) vByAdvDate[info.advCode]={};
+          if(!vByAdvDate[info.advCode][d]) vByAdvDate[info.advCode][d]={qtd:0,valor:0};
+          vByAdvDate[info.advCode][d].qtd+=1; vByAdvDate[info.advCode][d].valor+=valor;
+        }
         const platLabel=platformFromPlacement(info.placement);
         if(!vByPlatform[platLabel]) vByPlatform[platLabel]={qtd:0,valor:0};
         vByPlatform[platLabel].qtd+=1; vByPlatform[platLabel].valor+=valor;
         const fmtLabel=formatFromPlacement(info.placement);
         if(!vByFormat[fmtLabel]) vByFormat[fmtLabel]={qtd:0,valor:0,platform:platLabel};
         vByFormat[fmtLabel].qtd+=1; vByFormat[fmtLabel].valor+=valor;
-      } else if(!info.paid){
+      } else {
+        if(!vOrg[d]) vOrg[d]={qtd:0,valor:0};
+        vOrg[d].qtd+=1; vOrg[d].valor+=valor;
         const platLabel=organicPlatformLabel(info.channel);
         if(!vByPlatform[platLabel]) vByPlatform[platLabel]={qtd:0,valor:0};
         vByPlatform[platLabel].qtd+=1; vByPlatform[platLabel].valor+=valor;
@@ -502,9 +517,10 @@ async function loadData(force=false){
         vByFormat[fmtLabel].qtd+=1; vByFormat[fmtLabel].valor+=valor;
       }
     }
-    S.vendas=vD; S.vendasByAdv=vByAdv; S.vendasByAdvDate=vByAdvDate;
+    S.vendas=vD; S.vendasOrganico=vOrg; S.vendasByAdv=vByAdv; S.vendasByAdvDate=vByAdvDate;
     S.vendasByPlatform=vByPlatform; S.vendasByFormat=vByFormat;
     S.upsell=uD; S.upsellName=upsellName||"Upsell";
+    S.comprasPrincipal=comprasPrincipal; S.comprasUpsell=comprasUpsell;
     S.productName=productName||"Produto";
     S.updated=lastISO?fDateBR(lastISO):"—";
     S.firstLoad=false;
@@ -535,6 +551,13 @@ function getTotals(daily){
   return{...t,faturamento:t.fat,
     roas:t.spend>0?t.fat/t.spend:0,cpv:t.vendas>0?t.spend/t.vendas:0,
     ticket:t.vendas>0?t.fat/t.vendas:0,lucro:t.fat-(t.spend*TAXA_IMPOSTO)};
+}
+// Série diária simples de contagem de vendas a partir de um mapa date->{qtd,valor}
+// (usada para o gráfico de vendas orgânicas, à parte do tráfego pago)
+function getVendasSeries(map,start,end){
+  return Object.keys(map).sort().filter(d=>d>=start&&d<=end).map(date=>({
+    date, label:fDate(date), vendas:(map[date]?.qtd||0), valor:(map[date]?.valor||0),
+  }));
 }
 // Upsell/order bump (ex: Gravação) — não entra no ROAS/CPV do produto principal
 function getUpsellTotals(start,end){
@@ -621,6 +644,12 @@ function setAdSearch(v){ S.adSearch=v; renderAnuncios(); }
 function sortAnuncios(col){
   if(S.aSort.col===col) S.aSort.dir=S.aSort.dir==="asc"?"desc":"asc";
   else {S.aSort.col=col;S.aSort.dir="desc";}
+  renderAnuncios();
+}
+function setCampSearch(v){ S.campSearch=v; renderAnuncios(); }
+function sortCampanhas(col){
+  if(S.cSort.col===col) S.cSort.dir=S.cSort.dir==="asc"?"desc":"asc";
+  else {S.cSort.col=col;S.cSort.dir="desc";}
   renderAnuncios();
 }
 function setManualSpendHoje(v){
@@ -889,23 +918,36 @@ function renderPrincipal(){
         <div style="position:relative"><canvas id="c-fat"></canvas><div class="tip" id="t-fat"></div></div>
       </div>
     </div>
-    <div class="cc" style="margin-bottom:12px">
-      <div class="ch">
-        <span class="ct">Vendas (dia a dia)</span>
-        <div class="lg"><span class="li"><span class="ld" style="background:#34d399"></span>Vendas/dia</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="cc">
+        <div class="ch">
+          <span class="ct">Vendas do Tráfego (dia a dia)</span>
+          <div class="lg"><span class="li"><span class="ld" style="background:#34d399"></span>Vendas/dia</span></div>
+        </div>
+        <canvas id="c-bar-trafego"></canvas>
       </div>
-      <canvas id="c-bar-vendas"></canvas>
+      <div class="cc">
+        <div class="ch">
+          <span class="ct">Vendas Orgânicas (dia a dia)</span>
+          <div class="lg"><span class="li"><span class="ld" style="background:#8a96ab"></span>Vendas/dia</span></div>
+        </div>
+        <canvas id="c-bar-organico"></canvas>
+      </div>
     </div>
-    <p class="foot">Base Meta + Base compradores · Google Sheets</p>`;
+    <p class="foot">Base Meta + Base compradores · Google Sheets · ROAS/Faturamento/CPV consideram somente vendas de tráfego pago do produto principal</p>`;
+
+  const orgDaily=getVendasSeries(S.vendasOrganico,S.startDate,S.endDate);
 
   requestAnimationFrame(()=>{
     const mW=document.getElementById("c-dual")?.parentElement?.offsetWidth||720;
     const sW=document.getElementById("c-roas")?.parentElement?.offsetWidth||340;
-    const bW=document.getElementById("c-bar-vendas")?.parentElement?.offsetWidth||720;
+    const bW1=document.getElementById("c-bar-trafego")?.parentElement?.offsetWidth||340;
+    const bW2=document.getElementById("c-bar-organico")?.parentElement?.offsetWidth||340;
     drawDual("c-dual",daily,mW,230);
     drawChartWithOverlay("c-roas", daily,"roas",  v=>v.toFixed(2)+"x",META_ROAS,"Meta "+META_ROAS.toFixed(2)+"x",false,false,sW,170);
     drawChartWithOverlay("c-fat",  daily,"faturamento",fBRLShort,null,null,false,false,sW,170);
-    drawBarVendas("c-bar-vendas",daily,bW,160);
+    drawBarVendas("c-bar-trafego",daily,bW1,160);
+    drawBarVendas("c-bar-organico",orgDaily,bW2,160);
     setupTip("c-dual","t-dual",daily,[
       {key:"spend",color:CHART_INV,name:"Investimento"},
       {key:"cpv",color:CHART_CPV,name:"CPV"},
@@ -1073,47 +1115,84 @@ function renderTrafego(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// PÁGINA: Métricas do funil (simplificada — produto único, sem upsell)
+// PÁGINA: Métricas do funil (estilo "Reto": produto principal → upsell)
+// Considera TODAS as vendas do produto principal (tráfego + orgânico) + upsell
 // ══════════════════════════════════════════════════════════════════════════
 function renderFunil(){
   const el=document.getElementById("page-funil");if(!el)return;
-  const daily=getDailyT(S.startDate,S.endDate);
-  const t=getTotalsT(daily);
+  const start=S.startDate, end=S.endDate;
 
-  const stages=[
-    {name:"Impressões",       count:t.impressions, color:"#3b82f6"},
-    {name:"Cliques no link",  count:t.clicks,       color:"#60a5fa", pct:t.impressions>0?(t.clicks/t.impressions)*100:0},
-    {name:"Visitou a página", count:t.landingViews, color:"#34d399", pct:t.connect},
-    {name:"Checkout iniciado",count:t.checkouts,     color:"#fbbf24", pct:t.txPagChk},
-    {name:"Compra",           count:t.vendas,        color:"#22c55e", pct:t.txChkVnd},
-  ];
-  const maxCount=Math.max(stages[0].count,1);
+  const pInRange=(S.comprasPrincipal||[]).filter(r=>r.date>=start&&r.date<=end);
+  const uInRange=(S.comprasUpsell||[]).filter(r=>r.date>=start&&r.date<=end);
+  const qtdPrincipal=pInRange.length;
+  const valorPrincipal=pInRange.reduce((a,r)=>a+r.valor,0);
+  const qtdUpsell=uInRange.length;
+  const valorUpsell=uInRange.reduce((a,r)=>a+r.valor,0);
 
-  function stageRow(s,i){
-    const widthPct=Math.max((s.count/maxCount)*100,s.count>0?4:0.5);
-    return `<div class="funnel-stage">
-      <div class="funnel-name">${s.name}</div>
-      <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${widthPct}%;background:${s.color}"></div></div>
-      <div class="funnel-count">${s.count.toLocaleString("pt-BR")}</div>
-      <div class="funnel-pct">${i===0?"":fPct(s.pct)}</div>
-    </div>`;
-  }
+  // Take rate: % dos compradores do produto principal (por e-mail) que também compraram o upsell
+  const emailsPrincipal=new Set(pInRange.map(r=>r.email).filter(Boolean));
+  const emailsUpsell=new Set(uInRange.map(r=>r.email).filter(Boolean));
+  let matched=0; for(const e of emailsUpsell) if(emailsPrincipal.has(e)) matched++;
+  const takeRate=emailsPrincipal.size>0?(matched/emailsPrincipal.size)*100:0;
+
+  const investimento=getTotals(getDaily(start,end)).spend; // gasto total em anúncios no período
+  const faturamentoTotal=valorPrincipal+valorUpsell;
+  const roasFunil=investimento>0?faturamentoTotal/investimento:0;
+  const lucroBruto=faturamentoTotal-(investimento*TAXA_IMPOSTO);
+  const ltvMedio=qtdPrincipal>0?faturamentoTotal/qtdPrincipal:0;
+  const ticketPrincipal=qtdPrincipal>0?valorPrincipal/qtdPrincipal:0;
+  const ticketUpsell=qtdUpsell>0?valorUpsell/qtdUpsell:0;
+
+  const daily=getDailyT(start,end);
+  const BOX_MAXW=560;
+  const upsellW=Math.max(BOX_MAXW*Math.min(takeRate,100)/100, qtdUpsell>0?190:0);
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
         <div class="hdr-title">Métricas do Funil</div>
-        <div class="hdr-sub">${S.productName} · produto único, sem upsell/order bump</div>
+        <div class="hdr-sub">base: ${qtdPrincipal.toLocaleString("pt-BR")} compradores de ${S.productName} · atualizado em: ${D().updated||"—"}</div>
       </div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
 
-    <div class="cc" style="margin-bottom:20px">
-      <div class="ch"><span class="ct">Funil de conversão</span></div>
-      <div style="display:grid;grid-template-columns:170px 1fr 90px 70px;gap:12px;padding:2px 0 8px;font-size:9px;color:var(--hint);text-transform:uppercase;letter-spacing:.06em;font-weight:700">
-        <div>Etapa</div><div></div><div style="text-align:right">Total</div><div style="text-align:right">Conv.</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:13px">
+      ${kpiCard("Investimento",fBRL(investimento),"Meta Ads","var(--text-strong)")}
+      ${kpiCard("Faturamento Total",fBRL(faturamentoTotal),`${S.productName} + ${S.upsellName}`,"var(--text-strong)")}
+      ${kpiCard("ROAS Funil",roasFunil.toFixed(2)+"x",null,roasFunil>=META_ROAS?"#34d399":roasFunil>0?"#fbbf24":"var(--hint)")}
+      ${kpiCard("Lucro Bruto",fBRL(lucroBruto),null,lucroBruto>=0?"#34d399":"#f87171")}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:20px">
+      ${kpiCard("LTV médio",fBRL(ltvMedio),`por comprador ${S.productName}`,"var(--text-strong)")}
+      ${kpiCard("Take Rate — "+S.upsellName,fPct(takeRate),`${qtdUpsell} de ${emailsPrincipal.size} compraram`,"#22c55e")}
+      ${kpiCard("Ticket "+S.productName,fBRL(ticketPrincipal),null,"var(--text-strong)")}
+      ${kpiCard("Ticket "+S.upsellName,qtdUpsell>0?fBRL(ticketUpsell):"—",null,"var(--text-strong)")}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 260px;gap:14px;margin-bottom:20px">
+      <div class="cc">
+        <div class="ch"><span class="ct">Funil de conversão</span></div>
+        <div style="padding:24px 10px 10px">
+          <div style="max-width:${BOX_MAXW}px;margin:0 auto 22px;background:linear-gradient(135deg,#3b82f6,#2563eb);border-radius:12px;padding:18px 22px;text-align:center;box-shadow:0 8px 24px rgba(59,130,246,.25)">
+            <div style="font-size:9px;color:#dbeafe;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Entrada (Front-end)</div>
+            <div style="font-size:17px;font-weight:700;color:#fff;font-family:'Sora',sans-serif;margin:4px 0">${S.productName}</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#eff6ff">${qtdPrincipal.toLocaleString("pt-BR")} compras · ${fBRLShort(valorPrincipal)}</div>
+            <div style="font-size:10px;color:#bfdbfe;margin-top:2px">100%</div>
+          </div>
+          ${qtdUpsell>0?`
+          <div style="max-width:${upsellW}px;min-width:190px;margin:0 auto;background:linear-gradient(135deg,#d97706,#92400e);border-radius:12px;padding:14px 18px;text-align:center;box-shadow:0 8px 20px rgba(217,119,6,.2)">
+            <div style="font-size:9px;color:#fef3c7;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Upsell</div>
+            <div style="font-size:14px;font-weight:700;color:#fff;font-family:'Sora',sans-serif;margin:3px 0">${S.upsellName}</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#fffbeb">${qtdUpsell.toLocaleString("pt-BR")} compras · ${fBRLShort(valorUpsell)}</div>
+            <div style="font-size:10px;color:#fde68a;margin-top:2px">${fPct(takeRate)} dos compradores ${S.productName}</div>
+          </div>`:`<div style="text-align:center;color:var(--hint);font-size:12px;padding:16px 0">Nenhuma venda de ${S.upsellName} no período</div>`}
+        </div>
       </div>
-      ${stages.map(stageRow).join("")}
+      <div style="display:flex;flex-direction:column;gap:13px">
+        ${kpiCard("Compradores "+S.productName, qtdPrincipal.toLocaleString("pt-BR"), "no período","var(--text-strong)")}
+        ${kpiCard("Compradores "+S.upsellName, qtdUpsell.toLocaleString("pt-BR"), qtdPrincipal>0?fPct(takeRate)+" do "+S.productName:null,"#22c55e")}
+        ${kpiCard("Reembolsos", "—", "a base não traz status de reembolso","var(--hint)")}
+      </div>
     </div>
 
     <div class="charts-2x2">
@@ -1126,7 +1205,7 @@ function renderFunil(){
         <div style="position:relative"><canvas id="fc-chkvnd"></canvas><div class="tip" id="ft-chkvnd"></div></div>
       </div>
     </div>
-    <p class="foot">Base Meta + Base compradores · Google Sheets</p>`;
+    <p class="foot">Base Meta + Base compradores · Google Sheets · funil considera vendas de tráfego + orgânico</p>`;
 
   requestAnimationFrame(()=>{
     const sW=document.getElementById("fc-pagchk")?.parentElement?.offsetWidth||500;
@@ -1138,14 +1217,15 @@ function renderFunil(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// PÁGINA: Anúncios (atribuição de vendas por SCK → advCode)
+// PÁGINA: Anúncios — Campanhas + Anúncios (somente vendas de tráfego, via SCK)
 // ══════════════════════════════════════════════════════════════════════════
 function renderAnuncios(){
   const el=document.getElementById("page-anuncios");if(!el)return;
   const start=S.startDate, end=S.endDate;
   const dd=D();
 
-  const rows=[];
+  // ── Linhas de anúncio (por advCode) ──────────────────────────────────────
+  const adRows=[];
   for(const [advCode,adData] of Object.entries(dd.metaByAdv)){
     let spend=0,clicks=0,impressions=0,checkouts=0;
     for(const [d,v] of Object.entries(adData.byDate)){
@@ -1157,7 +1237,7 @@ function renderAnuncios(){
     for(const [vd,vv] of Object.entries(byD)){
       if(vd>=start&&vd<=end){ qtd+=vv.qtd; valor+=vv.valor; }
     }
-    rows.push({
+    adRows.push({
       advCode, adName:adData.adName, campName:adData.campName,
       adStatus:adData.adStatus, campStatus:adData.campStatus, adsetStatus:adData.adsetStatus,
       spend,clicks,impressions,checkouts,qtd,valor,
@@ -1167,8 +1247,34 @@ function renderAnuncios(){
     });
   }
 
+  // ── Linhas de campanha (agrupando os anúncios acima por Campaign Name) ───
+  const campMap={};
+  for(const r of adRows){
+    const key=r.campName||"—";
+    if(!campMap[key]) campMap[key]={campName:key,campStatus:r.campStatus,spend:0,clicks:0,impressions:0,checkouts:0,qtd:0,valor:0,nAds:0};
+    const c=campMap[key];
+    c.spend+=r.spend; c.clicks+=r.clicks; c.impressions+=r.impressions; c.checkouts+=r.checkouts;
+    c.qtd+=r.qtd; c.valor+=r.valor; c.nAds+=1;
+    if(r.campStatus) c.campStatus=r.campStatus;
+  }
+  const campRows=Object.values(campMap).map(c=>({
+    ...c,
+    cpc:c.clicks>0?c.spend/c.clicks:0, ctr:c.impressions>0?(c.clicks/c.impressions)*100:0,
+    cpm:c.impressions>0?(c.spend/c.impressions)*1000:0,
+    cpv:c.qtd>0?c.spend/c.qtd:0, roas:c.spend>0?c.valor/c.spend:0,
+  }));
+
+  const searchC=S.campSearch.trim().toLowerCase();
+  const filteredC=searchC?campRows.filter(r=>r.campName.toLowerCase().includes(searchC)):campRows;
+  const {col:cCol,dir:cDir}=S.cSort;
+  const sortedCamps=[...filteredC].sort((a,b)=>{
+    const av=a[cCol]??0,bv=b[cCol]??0;
+    if(typeof av==="string") return cDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
+    return cDir==="asc"?av-bv:bv-av;
+  });
+
   const search=S.adSearch.trim().toLowerCase();
-  const filtered=search?rows.filter(r=>(r.adName+" "+r.advCode+" "+r.campName).toLowerCase().includes(search)):rows;
+  const filtered=search?adRows.filter(r=>(r.adName+" "+r.advCode+" "+r.campName).toLowerCase().includes(search)):adRows;
   const {col,dir}=S.aSort;
   const sorted=[...filtered].sort((a,b)=>{
     const av=a[col]??0,bv=b[col]??0;
@@ -1176,29 +1282,34 @@ function renderAnuncios(){
     return dir==="asc"?av-bv:bv-av;
   });
 
-  const totals=sorted.reduce((a,r)=>({spend:a.spend+r.spend,clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions,
-    checkouts:a.checkouts+r.checkouts,qtd:a.qtd+r.qtd,valor:a.valor+r.valor}),
-    {spend:0,clicks:0,impressions:0,checkouts:0,qtd:0,valor:0});
-  totals.cpc=totals.clicks>0?totals.spend/totals.clicks:0;
-  totals.ctr=totals.impressions>0?(totals.clicks/totals.impressions)*100:0;
-  totals.cpm=totals.impressions>0?(totals.spend/totals.impressions)*1000:0;
-  totals.cpv=totals.qtd>0?totals.spend/totals.qtd:0;
-  totals.roas=totals.spend>0?totals.valor/totals.spend:0;
+  function sumTotals(list){
+    const t=list.reduce((a,r)=>({spend:a.spend+r.spend,clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions,
+      checkouts:a.checkouts+r.checkouts,qtd:a.qtd+r.qtd,valor:a.valor+r.valor}),
+      {spend:0,clicks:0,impressions:0,checkouts:0,qtd:0,valor:0});
+    t.cpc=t.clicks>0?t.spend/t.clicks:0;
+    t.ctr=t.impressions>0?(t.clicks/t.impressions)*100:0;
+    t.cpm=t.impressions>0?(t.spend/t.impressions)*1000:0;
+    t.cpv=t.qtd>0?t.spend/t.qtd:0;
+    t.roas=t.spend>0?t.valor/t.spend:0;
+    return t;
+  }
+  const totalsAds=sumTotals(sorted);
+  const totalsCamps=sumTotals(sortedCamps);
 
-  // Vendas sem atribuição de anúncio (orgânico/direto) no período
-  let orgQtd=0, orgValor=0;
-  for(const [d,v] of Object.entries(dd.vendas)){ if(d>=start&&d<=end){ /* total do período, calculado abaixo */ } }
-  const totalPeriodo=getTotals(getDaily(start,end));
-  orgQtd=Math.max(totalPeriodo.vendas-totals.qtd,0);
-  orgValor=Math.max(totalPeriodo.faturamento-totals.valor,0);
+  // Vendas de tráfego sem anúncio identificado (SCK pago mas sem advCode reconhecido)
+  const totalTrafego=getTotals(getDaily(start,end));
+  const semAdvQtd=Math.max(totalTrafego.vendas-totalsAds.qtd,0);
+  const semAdvValor=Math.max(totalTrafego.faturamento-totalsAds.valor,0);
 
-  function th(label,key,extraClass=""){
+  function thAd(label,key,extraClass=""){
     const arrow=col===key?(dir==="asc"?" ▲":" ▼"):"";
     return `<th class="${extraClass}" onclick="sortAnuncios('${key}')">${label}${arrow}</th>`;
   }
-  function statusDotFor(r){
-    const active=[r.adStatus,r.campStatus,r.adsetStatus].some(s=>s==="ACTIVE");
-    const hasData=!!(r.adStatus||r.campStatus||r.adsetStatus);
+  function thCamp(label,key,extraClass=""){
+    const arrow=cCol===key?(cDir==="asc"?" ▲":" ▼"):"";
+    return `<th class="${extraClass}" onclick="sortCampanhas('${key}')">${label}${arrow}</th>`;
+  }
+  function statusDotFor(active,hasData){
     const color=!hasData?"var(--border-h)":active?"#22c55e":"#ef4444";
     const title=!hasData?"Sem dados":active?"Ativo":"Pausado";
     return `<span class="status-dot" style="background:${color}" title="${title}"></span>`;
@@ -1208,38 +1319,98 @@ function renderAnuncios(){
     <div class="hdr" style="margin-bottom:6px">
       <div>
         <div class="hdr-title">Anúncios</div>
-        <div class="hdr-sub">atribuição de vendas via SCK (código de rastreio) · atualizado em: ${D().updated||"—"}</div>
+        <div class="hdr-sub">somente vendas de tráfego pago, atribuídas via SCK · atualizado em: ${D().updated||"—"}</div>
       </div>
-      <input class="search-box" placeholder="Buscar anúncio ou campanha..." value="${S.adSearch}" oninput="setAdSearch(this.value)"/>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
 
+    <div class="section-lbl" style="margin-top:0">Campanhas</div>
+    <div class="ch" style="margin-bottom:10px">
+      <span></span>
+      <input class="search-box" placeholder="Buscar campanha..." value="${S.campSearch}" oninput="setCampSearch(this.value)"/>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:26px">
+    <table class="dtable">
+      <thead><tr>
+        ${thCamp("Campanha","campName","tleft")}
+        <th class="tleft">Status</th>
+        ${thCamp("Anúncios","nAds")}
+        ${thCamp("Investimento","spend")}
+        ${thCamp("Cliques","clicks")}
+        ${thCamp("CTR","ctr")}
+        ${thCamp("Checkouts","checkouts")}
+        ${thCamp("Vendas","qtd")}
+        ${thCamp("Faturamento","valor")}
+        ${thCamp("CPV","cpv")}
+        ${thCamp("ROAS","roas")}
+      </tr></thead>
+      <tbody>
+        ${sortedCamps.map((r,i)=>{
+          const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
+          const roasColor=r.roas>=META_ROAS?"#22c55e":r.roas>0?"#f59e0b":"var(--hint)";
+          return `<tr style="background:${bg}">
+            <td class="tleft">${r.campName}</td>
+            <td class="tleft">${statusDotFor(r.campStatus==="ACTIVE",!!r.campStatus)}</td>
+            <td>${r.nAds}</td>
+            <td>${fBRL(r.spend)}</td>
+            <td>${r.clicks}</td>
+            <td>${fPct(r.ctr)}</td>
+            <td>${r.checkouts}</td>
+            <td style="color:var(--text-strong);font-weight:600">${r.qtd}</td>
+            <td>${fBRL(r.valor)}</td>
+            <td>${r.cpv>0?fBRL(r.cpv):"—"}</td>
+            <td style="color:${roasColor};font-weight:600">${r.roas>0?r.roas.toFixed(2)+"x":"—"}</td>
+          </tr>`;
+        }).join("")}
+        <tr class="totrow">
+          <td class="tleft">Total (${sortedCamps.length} campanhas)</td><td class="tleft"></td>
+          <td>${sortedCamps.reduce((a,r)=>a+r.nAds,0)}</td>
+          <td>${fBRL(totalsCamps.spend)}</td>
+          <td>${totalsCamps.clicks}</td>
+          <td>${fPct(totalsCamps.ctr)}</td>
+          <td>${totalsCamps.checkouts}</td>
+          <td>${totalsCamps.qtd}</td>
+          <td>${fBRL(totalsCamps.valor)}</td>
+          <td>${totalsCamps.cpv>0?fBRL(totalsCamps.cpv):"—"}</td>
+          <td>${totalsCamps.roas>0?totalsCamps.roas.toFixed(2)+"x":"—"}</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="section-lbl" style="margin-top:0">Anúncios</div>
+    <div class="ch" style="margin-bottom:10px">
+      <span></span>
+      <input class="search-box" placeholder="Buscar anúncio ou campanha..." value="${S.adSearch}" oninput="setAdSearch(this.value)"/>
+    </div>
     <div style="overflow-x:auto">
     <table class="dtable">
       <thead><tr>
-        ${th("Anúncio","adName","tleft")}
-        ${th("Campanha","campName","tleft")}
+        ${thAd("Anúncio","adName","tleft")}
+        ${thAd("Campanha","campName","tleft")}
         <th class="tleft">Status</th>
-        ${th("Investimento","spend")}
-        ${th("Cliques","clicks")}
-        ${th("Impressões","impressions")}
-        ${th("CTR","ctr")}
-        ${th("CPC","cpc")}
-        ${th("CPM","cpm")}
-        ${th("Checkouts","checkouts")}
-        ${th("Vendas","qtd")}
-        ${th("Faturamento","valor")}
-        ${th("CPV","cpv")}
-        ${th("ROAS","roas")}
+        ${thAd("Investimento","spend")}
+        ${thAd("Cliques","clicks")}
+        ${thAd("Impressões","impressions")}
+        ${thAd("CTR","ctr")}
+        ${thAd("CPC","cpc")}
+        ${thAd("CPM","cpm")}
+        ${thAd("Checkouts","checkouts")}
+        ${thAd("Vendas","qtd")}
+        ${thAd("Faturamento","valor")}
+        ${thAd("CPV","cpv")}
+        ${thAd("ROAS","roas")}
       </tr></thead>
       <tbody>
         ${sorted.map((r,i)=>{
           const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
           const roasColor=r.roas>=META_ROAS?"#22c55e":r.roas>0?"#f59e0b":"var(--hint)";
+          const active=[r.adStatus,r.campStatus,r.adsetStatus].some(s=>s==="ACTIVE");
+          const hasData=!!(r.adStatus||r.campStatus||r.adsetStatus);
           return `<tr style="background:${bg}">
             <td class="tleft">${r.adName||r.advCode}</td>
             <td class="tleft">${r.campName}</td>
-            <td class="tleft">${statusDotFor(r)}</td>
+            <td class="tleft">${statusDotFor(active,hasData)}</td>
             <td>${fBRL(r.spend)}</td>
             <td>${r.clicks}</td>
             <td>${r.impressions}</td>
@@ -1256,27 +1427,27 @@ function renderAnuncios(){
         <tr class="totrow">
           <td class="tleft">Total (${sorted.length} anúncios)</td>
           <td class="tleft"></td><td class="tleft"></td>
-          <td>${fBRL(totals.spend)}</td>
-          <td>${totals.clicks}</td>
-          <td>${totals.impressions}</td>
-          <td>${fPct(totals.ctr)}</td>
-          <td>${fBRL(totals.cpc)}</td>
-          <td>${fBRL(totals.cpm)}</td>
-          <td>${totals.checkouts}</td>
-          <td>${totals.qtd}</td>
-          <td>${fBRL(totals.valor)}</td>
-          <td>${totals.cpv>0?fBRL(totals.cpv):"—"}</td>
-          <td>${totals.roas>0?totals.roas.toFixed(2)+"x":"—"}</td>
+          <td>${fBRL(totalsAds.spend)}</td>
+          <td>${totalsAds.clicks}</td>
+          <td>${totalsAds.impressions}</td>
+          <td>${fPct(totalsAds.ctr)}</td>
+          <td>${fBRL(totalsAds.cpc)}</td>
+          <td>${fBRL(totalsAds.cpm)}</td>
+          <td>${totalsAds.checkouts}</td>
+          <td>${totalsAds.qtd}</td>
+          <td>${fBRL(totalsAds.valor)}</td>
+          <td>${totalsAds.cpv>0?fBRL(totalsAds.cpv):"—"}</td>
+          <td>${totalsAds.roas>0?totalsAds.roas.toFixed(2)+"x":"—"}</td>
         </tr>
       </tbody>
     </table>
     </div>
 
-    <div class="section-lbl">Sem atribuição de anúncio</div>
+    <div class="section-lbl">Vendas de tráfego sem anúncio identificado</div>
     <div class="kc" style="max-width:420px">
-      <div class="kc-lbl">Vendas orgânicas / diretas (bio, stories, etc.)</div>
-      <div class="kc-val" style="font-size:18px">${orgQtd} vendas · ${fBRL(orgValor)}</div>
-      <div class="kc-sub">Compras cujo SCK não aponta para um anúncio pago do Meta</div>
+      <div class="kc-lbl">SCK indica anúncio pago, mas sem Ad ID reconhecível</div>
+      <div class="kc-val" style="font-size:18px">${semAdvQtd} vendas · ${fBRL(semAdvValor)}</div>
+      <div class="kc-sub">Não inclui vendas orgânicas (essas ficam na aba Principal/Funil)</div>
     </div>
     <p class="foot">Base Meta + Base compradores · Google Sheets</p>`;
 }
