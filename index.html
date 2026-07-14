@@ -909,7 +909,6 @@ function renderPrincipal(){
   const tot=getTotals(daily);
   const roasC=statusColor(tot.roas,META_ROAS,true);
   const cpvC=statusColor(tot.cpv,META_CPV,false);
-  const ups=getUpsellTotals(S.startDate,S.endDate);
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
@@ -926,12 +925,6 @@ function renderPrincipal(){
       ${kpiCard("Faturamento",fBRL(tot.faturamento),S.productName,"var(--text-strong)")}
       ${kpiCard("Custo por Venda",fBRL(tot.cpv),`meta ${fBRL(META_CPV)}`,cpvC,false,tot.cpv,false)}
     </div>
-    ${ups.qtd>0?`<div class="kc" style="margin-bottom:16px;padding:12px 18px;display:flex;align-items:center;gap:10px">
-      <span style="font-size:16px">🎁</span>
-      <span style="font-size:12px;color:var(--muted)">Upsell (${S.upsellName}):</span>
-      <span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--text-strong)">${ups.qtd} vendas · ${fBRL(ups.valor)}</span>
-      <span style="font-size:10px;color:var(--hint)">— não entra no ROAS/CPV acima</span>
-    </div>`:""}
     <div class="cc" style="margin-bottom:12px;position:relative">
       <div class="ch">
         <span class="ct">Investimento × Custo por Venda</span>
@@ -1372,39 +1365,7 @@ function renderAnuncios(){
     </div>`;
   }
 
-  // ── 5. Painel de resumo agregado da seleção (campanhas OU anúncios) ─────
-  function selectionPanel(){
-    const selCampNames=[...S.selectedCamps];
-    const selAdCodes=[...S.selectedAds];
-    if(selCampNames.length<1 && selAdCodes.length<1) return "";
-    let pSpend=0,pQtd=0,pClicks=0,pImpr=0,pValor=0;
-    if(selCampNames.length>0){
-      for(const c of campRows){ if(!S.selectedCamps.has(c.campName)) continue;
-        pSpend+=c.spend; pQtd+=c.qtd; pClicks+=c.clicks; pImpr+=c.impressions; pValor+=c.valor; }
-    } else {
-      for(const r of adRowsAll){ if(!S.selectedAds.has(r.advCode)) continue;
-        pSpend+=r.spend; pQtd+=r.qtd; pClicks+=r.clicks; pImpr+=r.impressions; pValor+=r.valor; }
-    }
-    const pCpv=pQtd>0?pSpend/pQtd:0, pRoas=pSpend>0?pValor/pSpend:0, pTicket=pQtd>0?pValor/pQtd:0;
-    const pCtr=pImpr>0?(pClicks/pImpr)*100:0, pCpm=pImpr>0?(pSpend/pImpr)*1000:0, pCpc=pClicks>0?pSpend/pClicks:0;
-    const label=selCampNames.length>0?`${selCampNames.length} campanha${selCampNames.length>1?"s":""} selecionada${selCampNames.length>1?"s":""}`:`${selAdCodes.length} anúncio${selAdCodes.length>1?"s":""} selecionado${selAdCodes.length>1?"s":""}`;
-    function box(lbl,val,color){ return `<div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">${lbl}</div><div style="font-size:13px;font-weight:700;color:${color||"var(--text-strong)"};font-family:'JetBrains Mono',monospace">${val}</div></div>`; }
-    return `<div style="background:rgba(59,130,246,.06);border:1px solid rgba(96,165,250,.25);border-radius:12px;padding:14px 18px;margin-bottom:16px">
-      <div style="font-size:11px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">📊 Resumo da seleção — ${label}</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px">
-        ${box("Investimento",fBRL(pSpend))}
-        ${box("Vendas",pQtd)}
-        ${box("Custo/Venda",pQtd>0?fBRL(pCpv):"—",pQtd>0?sc(pCpv,META_CPV,false):"var(--hint)")}
-        ${box("ROAS",pRoas>0?pRoas.toFixed(2)+"x":"—",pRoas>0?sc(pRoas,META_ROAS,true):"var(--hint)")}
-        ${box("Ticket Médio",pQtd>0?fBRL(pTicket):"—")}
-        ${box("CTR",fPct(pCtr),sc(pCtr,METAS_T.ctr.val,true))}
-        ${box("CPM",fBRL(pCpm),sc(pCpm,METAS_T.cpm.val,false))}
-        ${box("CPC",fBRL(pCpc),sc(pCpc,METAS_T.cpc.val,false))}
-      </div>
-    </div>`;
-  }
-
-  // ── 6. Resumo de Anúncios (texto copiável para WhatsApp) ─────────────────
+  // ── 5. Resumo de Anúncios (texto copiável para WhatsApp) ─────────────────
   function resumoAdsPanel(){
     if(!S.selectedAds.size) return "";
     const fDM=iso=>{if(!iso)return"";const[,m,d]=iso.split("-");return d+"/"+m;};
@@ -1503,8 +1464,6 @@ function renderAnuncios(){
       </tbody>
     </table>
     </div>
-
-    ${selectionPanel()}
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
       <span class="section-lbl" style="margin:0">Anúncios</span>
