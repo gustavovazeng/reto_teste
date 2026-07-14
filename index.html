@@ -270,6 +270,8 @@ const S = {
     txPagChk:{inv:false,cpv:false},txChkVnd:{inv:false,cpv:false},connect:{inv:false,cpv:false}},
   aSort:{col:"spend",dir:"desc"}, adSearch:"",
   cSort:{col:"spend",dir:"desc"}, campSearch:"",
+  selectedCamps:new Set(), selectedAds:new Set(),
+  lastClickedCamp:null, lastClickedAd:null,
   manualSpendHoje:null,
   currentPage:"principal",
 };
@@ -439,9 +441,10 @@ async function loadData(force=false){
       const adStatusR = r["Ad Status"]||"";
       const campStatusR = r["Campaign Status"]||"";
       const adsetStatusR= r["Adset Status"]||"";
+      const igUrl     = r["Instagram Permalink URL"]||"";
       const advCode   = extractAdvCode(adName);
       if(advCode){
-        if(!mByAdv[advCode]) mByAdv[advCode]={advCode,adName,campName,adStatus:"",campStatus:"",adsetStatus:"",lastStatusDate:"",spend:0,clicks:0,impressions:0,checkouts:0,byDate:{}};
+        if(!mByAdv[advCode]) mByAdv[advCode]={advCode,adName,campName,adStatus:"",campStatus:"",adsetStatus:"",lastStatusDate:"",igUrl:"",spend:0,clicks:0,impressions:0,checkouts:0,byDate:{}};
         const a=mByAdv[advCode];
         a.spend+=spendV; a.clicks+=clicksV; a.impressions+=imprV; a.checkouts+=ckV;
         if(!a.byDate[d]) a.byDate[d]={spend:0,clicks:0,impressions:0,checkouts:0};
@@ -451,6 +454,7 @@ async function loadData(force=false){
         }
         if(adName) a.adName=adName;
         if(campName&&campName!=="—") a.campName=campName;
+        if(igUrl && !a.igUrl) a.igUrl=igUrl;
       }
       const pubLabel=publisherPlatformLabel(r["Publisher Platform (Breakdown)"]);
       if(pubLabel){
@@ -651,6 +655,36 @@ function sortCampanhas(col){
   if(S.cSort.col===col) S.cSort.dir=S.cSort.dir==="asc"?"desc":"asc";
   else {S.cSort.col=col;S.cSort.dir="desc";}
   renderAnuncios();
+}
+function clearCamps(){ S.selectedCamps.clear(); renderAnuncios(); }
+function clearSelectedAds(){ S.selectedAds.clear(); renderAnuncios(); }
+function toggleCamp(name, shiftKey){
+  if(shiftKey && S.lastClickedCamp && S._campOrder){
+    const a=S._campOrder.indexOf(S.lastClickedCamp), b=S._campOrder.indexOf(name);
+    if(a>=0&&b>=0){ const lo=Math.min(a,b),hi=Math.max(a,b); for(let i=lo;i<=hi;i++) S.selectedCamps.add(S._campOrder[i]); }
+  } else {
+    if(S.selectedCamps.has(name)) S.selectedCamps.delete(name); else S.selectedCamps.add(name);
+  }
+  S.lastClickedCamp=name;
+  renderAnuncios();
+}
+function toggleAd(code, shiftKey){
+  if(shiftKey && S.lastClickedAd && S._adOrder){
+    const a=S._adOrder.indexOf(S.lastClickedAd), b=S._adOrder.indexOf(code);
+    if(a>=0&&b>=0){ const lo=Math.min(a,b),hi=Math.max(a,b); for(let i=lo;i<=hi;i++) S.selectedAds.add(S._adOrder[i]); }
+  } else {
+    if(S.selectedAds.has(code)) S.selectedAds.delete(code); else S.selectedAds.add(code);
+  }
+  S.lastClickedAd=code;
+  renderAnuncios();
+}
+function copyResumoAds(){
+  const el=document.getElementById("resumo-ads-pre");
+  if(!el||!el._text) return;
+  navigator.clipboard.writeText(el._text).then(()=>{
+    const btn=document.getElementById("copy-ads-btn");
+    if(btn){btn.textContent="✓ Copiado!";setTimeout(()=>{btn.textContent="📋 Copiar resumo";},2000);}
+  });
 }
 function setManualSpendHoje(v){
   const n=parseFloat(String(v).replace(/[R$\s.]/g,"").replace(",","."));
@@ -1218,70 +1252,87 @@ function renderFunil(){
 
 // ══════════════════════════════════════════════════════════════════════════
 // PÁGINA: Anúncios — Campanhas + Anúncios (somente vendas de tráfego, via SCK)
+// Seleção de campanhas filtra os anúncios exibidos; seleção de anúncios gera
+// um resumo copiável (igual ao modelo "Reto").
 // ══════════════════════════════════════════════════════════════════════════
 function renderAnuncios(){
   const el=document.getElementById("page-anuncios");if(!el)return;
+  const _focusedId=document.activeElement?.id;
   const start=S.startDate, end=S.endDate;
   const dd=D();
 
-  // ── Linhas de anúncio (por advCode) ──────────────────────────────────────
-  const adRows=[];
+  // ── 1. Linhas de anúncio (por advCode), sem filtro de campanha ainda ─────
+  const adRowsAll=[];
   for(const [advCode,adData] of Object.entries(dd.metaByAdv)){
     let spend=0,clicks=0,impressions=0,checkouts=0;
     for(const [d,v] of Object.entries(adData.byDate)){
       if(d>=start&&d<=end){ spend+=v.spend; clicks+=v.clicks; impressions+=v.impressions; checkouts+=v.checkouts; }
     }
-    if(spend===0&&clicks===0&&impressions===0) continue;
     let qtd=0, valor=0;
     const byD=dd.vendasByAdvDate[advCode]||{};
     for(const [vd,vv] of Object.entries(byD)){
       if(vd>=start&&vd<=end){ qtd+=vv.qtd; valor+=vv.valor; }
     }
-    adRows.push({
-      advCode, adName:adData.adName, campName:adData.campName,
-      adStatus:adData.adStatus, campStatus:adData.campStatus, adsetStatus:adData.adsetStatus,
+    if(spend===0&&clicks===0&&impressions===0&&qtd===0) continue;
+    const isActive=[adData.adStatus,adData.campStatus,adData.adsetStatus].some(s=>s==="ACTIVE");
+    const hasStatusData=!!(adData.adStatus||adData.campStatus||adData.adsetStatus);
+    adRowsAll.push({
+      advCode, adName:adData.adName, campName:adData.campName||"—", igUrl:adData.igUrl||"",
+      adStatus:adData.adStatus, campStatus:adData.campStatus, isActive, hasStatusData,
       spend,clicks,impressions,checkouts,qtd,valor,
       cpc:clicks>0?spend/clicks:0, ctr:impressions>0?(clicks/impressions)*100:0,
       cpm:impressions>0?(spend/impressions)*1000:0,
-      cpv:qtd>0?spend/qtd:0, roas:spend>0?valor/spend:0,
+      cpv:qtd>0?spend/qtd:0, ticket:qtd>0?valor/qtd:0, roas:spend>0?valor/spend:0,
     });
   }
 
-  // ── Linhas de campanha (agrupando os anúncios acima por Campaign Name) ───
+  // ── 2. Linhas de campanha (agrupando os anúncios acima por Campaign Name) ─
   const campMap={};
-  for(const r of adRows){
-    const key=r.campName||"—";
-    if(!campMap[key]) campMap[key]={campName:key,campStatus:r.campStatus,spend:0,clicks:0,impressions:0,checkouts:0,qtd:0,valor:0,nAds:0};
+  for(const r of adRowsAll){
+    const key=r.campName;
+    if(!campMap[key]) campMap[key]={campName:key,campStatus:r.campStatus,spend:0,clicks:0,impressions:0,checkouts:0,qtd:0,valor:0,adCodes:[]};
     const c=campMap[key];
     c.spend+=r.spend; c.clicks+=r.clicks; c.impressions+=r.impressions; c.checkouts+=r.checkouts;
-    c.qtd+=r.qtd; c.valor+=r.valor; c.nAds+=1;
+    c.qtd+=r.qtd; c.valor+=r.valor; c.adCodes.push(r.advCode);
     if(r.campStatus) c.campStatus=r.campStatus;
   }
   const campRows=Object.values(campMap).map(c=>({
     ...c,
     cpc:c.clicks>0?c.spend/c.clicks:0, ctr:c.impressions>0?(c.clicks/c.impressions)*100:0,
     cpm:c.impressions>0?(c.spend/c.impressions)*1000:0,
-    cpv:c.qtd>0?c.spend/c.qtd:0, roas:c.spend>0?c.valor/c.spend:0,
+    cpv:c.qtd>0?c.spend/c.qtd:0, ticket:c.qtd>0?c.valor/c.qtd:0, roas:c.spend>0?c.valor/c.spend:0,
   }));
 
-  const searchC=S.campSearch.trim().toLowerCase();
-  const filteredC=searchC?campRows.filter(r=>r.campName.toLowerCase().includes(searchC)):campRows;
   const {col:cCol,dir:cDir}=S.cSort;
-  const sortedCamps=[...filteredC].sort((a,b)=>{
+  const sortedCampsAll=[...campRows].sort((a,b)=>{
     const av=a[cCol]??0,bv=b[cCol]??0;
     if(typeof av==="string") return cDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
     return cDir==="asc"?av-bv:bv-av;
   });
+  const searchC=S.campSearch.trim().toLowerCase();
+  const filteredCamps=searchC?sortedCampsAll.filter(r=>r.campName.toLowerCase().includes(searchC)):sortedCampsAll;
+  S._campOrder=filteredCamps.map(r=>r.campName);
 
-  const search=S.adSearch.trim().toLowerCase();
-  const filtered=search?adRows.filter(r=>(r.adName+" "+r.advCode+" "+r.campName).toLowerCase().includes(search)):adRows;
+  // ── 3. Filtra anúncios pelas campanhas selecionadas (clique nas linhas) ──
+  const hasFilter=S.selectedCamps.size>0;
+  let allowedAdCodes=null;
+  if(hasFilter){
+    allowedAdCodes=new Set();
+    for(const c of campRows){ if(S.selectedCamps.has(c.campName)) c.adCodes.forEach(code=>allowedAdCodes.add(code)); }
+  }
+  const adRowsScope=hasFilter?adRowsAll.filter(r=>allowedAdCodes.has(r.advCode)):adRowsAll;
+
   const {col,dir}=S.aSort;
-  const sorted=[...filtered].sort((a,b)=>{
+  const sortedAdsAll=[...adRowsScope].sort((a,b)=>{
     const av=a[col]??0,bv=b[col]??0;
     if(typeof av==="string") return dir==="asc"?av.localeCompare(bv):bv.localeCompare(av);
     return dir==="asc"?av-bv:bv-av;
   });
+  const searchA=S.adSearch.trim().toLowerCase();
+  const filteredAds=searchA?sortedAdsAll.filter(r=>(r.adName+" "+r.advCode+" "+r.campName).toLowerCase().includes(searchA)):sortedAdsAll;
+  S._adOrder=filteredAds.map(r=>r.advCode);
 
+  // ── 4. Totais do topo (respeitam o filtro de campanha) ───────────────────
   function sumTotals(list){
     const t=list.reduce((a,r)=>({spend:a.spend+r.spend,clicks:a.clicks+r.clicks,impressions:a.impressions+r.impressions,
       checkouts:a.checkouts+r.checkouts,qtd:a.qtd+r.qtd,valor:a.valor+r.valor}),
@@ -1290,166 +1341,245 @@ function renderAnuncios(){
     t.ctr=t.impressions>0?(t.clicks/t.impressions)*100:0;
     t.cpm=t.impressions>0?(t.spend/t.impressions)*1000:0;
     t.cpv=t.qtd>0?t.spend/t.qtd:0;
+    t.ticket=t.qtd>0?t.valor/t.qtd:0;
     t.roas=t.spend>0?t.valor/t.spend:0;
     return t;
   }
-  const totalsAds=sumTotals(sorted);
-  const totalsCamps=sumTotals(sortedCamps);
+  const tot=sumTotals(adRowsScope);
 
-  // Vendas de tráfego sem anúncio identificado (SCK pago mas sem advCode reconhecido)
+  // Vendas de tráfego sem anúncio identificado (SCK pago mas sem advCode reconhecido) — global, não filtra por campanha
   const totalTrafego=getTotals(getDaily(start,end));
-  const semAdvQtd=Math.max(totalTrafego.vendas-totalsAds.qtd,0);
-  const semAdvValor=Math.max(totalTrafego.faturamento-totalsAds.valor,0);
+  const totAllAds=sumTotals(adRowsAll);
+  const semAdvQtd=Math.max(totalTrafego.vendas-totAllAds.qtd,0);
+  const semAdvValor=Math.max(totalTrafego.faturamento-totAllAds.valor,0);
 
-  function thAd(label,key,extraClass=""){
-    const arrow=col===key?(dir==="asc"?" ▲":" ▼"):"";
-    return `<th class="${extraClass}" onclick="sortAnuncios('${key}')">${label}${arrow}</th>`;
-  }
-  function thCamp(label,key,extraClass=""){
-    const arrow=cCol===key?(cDir==="asc"?" ▲":" ▼"):"";
-    return `<th class="${extraClass}" onclick="sortCampanhas('${key}')">${label}${arrow}</th>`;
+  function sc(v,meta,hi){ return statusColor(v,meta,hi); }
+  function thC(col_,lbl,sortFn,extraClass=""){
+    const active=(sortFn==="camp"?cCol:col)===col_;
+    const activeDir=sortFn==="camp"?cDir:dir;
+    const arrow=active?(activeDir==="asc"?" ▲":" ▼"):" ↕";
+    const fn=sortFn==="camp"?`sortCampanhas('${col_}')`:`sortAnuncios('${col_}')`;
+    return `<th class="${extraClass}" onclick="${fn}" style="color:${active?"var(--text)":"var(--hint)"}">${lbl}<span style="color:${active?"#60a5fa":"var(--hint)"};margin-left:2px">${arrow}</span></th>`;
   }
   function statusDotFor(active,hasData){
     const color=!hasData?"var(--border-h)":active?"#22c55e":"#ef4444";
     const title=!hasData?"Sem dados":active?"Ativo":"Pausado";
     return `<span class="status-dot" style="background:${color}" title="${title}"></span>`;
   }
+  function checkbox(sel,color){
+    return `<div style="width:14px;height:14px;border-radius:3px;border:1.5px solid ${sel?color:"var(--border-h)"};background:${sel?color:"transparent"};display:flex;align-items:center;justify-content:center;margin:0 auto">
+      ${sel?`<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`:""}
+    </div>`;
+  }
+
+  // ── 5. Painel de resumo agregado da seleção (campanhas OU anúncios) ─────
+  function selectionPanel(){
+    const selCampNames=[...S.selectedCamps];
+    const selAdCodes=[...S.selectedAds];
+    if(selCampNames.length<1 && selAdCodes.length<1) return "";
+    let pSpend=0,pQtd=0,pClicks=0,pImpr=0,pValor=0;
+    if(selCampNames.length>0){
+      for(const c of campRows){ if(!S.selectedCamps.has(c.campName)) continue;
+        pSpend+=c.spend; pQtd+=c.qtd; pClicks+=c.clicks; pImpr+=c.impressions; pValor+=c.valor; }
+    } else {
+      for(const r of adRowsAll){ if(!S.selectedAds.has(r.advCode)) continue;
+        pSpend+=r.spend; pQtd+=r.qtd; pClicks+=r.clicks; pImpr+=r.impressions; pValor+=r.valor; }
+    }
+    const pCpv=pQtd>0?pSpend/pQtd:0, pRoas=pSpend>0?pValor/pSpend:0, pTicket=pQtd>0?pValor/pQtd:0;
+    const pCtr=pImpr>0?(pClicks/pImpr)*100:0, pCpm=pImpr>0?(pSpend/pImpr)*1000:0, pCpc=pClicks>0?pSpend/pClicks:0;
+    const label=selCampNames.length>0?`${selCampNames.length} campanha${selCampNames.length>1?"s":""} selecionada${selCampNames.length>1?"s":""}`:`${selAdCodes.length} anúncio${selAdCodes.length>1?"s":""} selecionado${selAdCodes.length>1?"s":""}`;
+    function box(lbl,val,color){ return `<div style="background:var(--card);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--hint);margin-bottom:3px">${lbl}</div><div style="font-size:13px;font-weight:700;color:${color||"var(--text-strong)"};font-family:'JetBrains Mono',monospace">${val}</div></div>`; }
+    return `<div style="background:rgba(59,130,246,.06);border:1px solid rgba(96,165,250,.25);border-radius:12px;padding:14px 18px;margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px">📊 Resumo da seleção — ${label}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px">
+        ${box("Investimento",fBRL(pSpend))}
+        ${box("Vendas",pQtd)}
+        ${box("Custo/Venda",pQtd>0?fBRL(pCpv):"—",pQtd>0?sc(pCpv,META_CPV,false):"var(--hint)")}
+        ${box("ROAS",pRoas>0?pRoas.toFixed(2)+"x":"—",pRoas>0?sc(pRoas,META_ROAS,true):"var(--hint)")}
+        ${box("Ticket Médio",pQtd>0?fBRL(pTicket):"—")}
+        ${box("CTR",fPct(pCtr),sc(pCtr,METAS_T.ctr.val,true))}
+        ${box("CPM",fBRL(pCpm),sc(pCpm,METAS_T.cpm.val,false))}
+        ${box("CPC",fBRL(pCpc),sc(pCpc,METAS_T.cpc.val,false))}
+      </div>
+    </div>`;
+  }
+
+  // ── 6. Resumo de Anúncios (texto copiável para WhatsApp) ─────────────────
+  function resumoAdsPanel(){
+    if(!S.selectedAds.size) return "";
+    const fDM=iso=>{if(!iso)return"";const[,m,d]=iso.split("-");return d+"/"+m;};
+    const selRows=[...adRowsAll].filter(r=>S.selectedAds.has(r.advCode)).sort((a,b)=>b.qtd-a.qtd);
+    const hdr=`*Melhores ads - Rafa Livramento - ${S.productName}*\n_${fDM(start)} a ${fDM(end)}_`;
+    const blocks=selRows.map(r=>{
+      const lines=["Nome do ad  ⤵️",r.adName||r.advCode];
+      if(r.igUrl) lines.push(r.igUrl);
+      lines.push("Investimento:\t"+fBRL(r.spend));
+      lines.push("Vendas:\t"+r.qtd);
+      lines.push("Cust/ venda:\t"+(r.qtd>0?fBRL(r.cpv):"—"));
+      lines.push("");
+      lines.push("CPC:\t"+fBRL(r.cpc));
+      lines.push("CPM:\t"+fBRL(r.cpm));
+      lines.push("CTR:\t"+fPct(r.ctr));
+      lines.push("—————————");
+      return lines.join("\n");
+    }).join("\n");
+    const txt=hdr+"\n\n"+blocks;
+    setTimeout(()=>{const elp=document.getElementById("resumo-ads-pre");if(elp)elp._text=txt;},0);
+    return `<div style="background:var(--card);border:1px solid rgba(16,185,129,.3);border-radius:14px;padding:20px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div class="section-lbl" style="margin:0;color:#6ee7b7">Resumo de Anúncios</div>
+          <div style="font-size:10px;color:var(--hint);margin-top:2px">${selRows.length} ad(s) · ${fDM(start)} a ${fDM(end)}</div>
+        </div>
+        <button id="copy-ads-btn" onclick="copyResumoAds()" style="font-size:11px;font-weight:600;padding:7px 16px;border-radius:9px;border:1px solid rgba(16,185,129,.4);background:rgba(16,185,129,.15);color:#6ee7b7;cursor:pointer;font-family:'DM Sans',sans-serif">📋 Copiar resumo</button>
+      </div>
+      <pre id="resumo-ads-pre" style="background:var(--surf);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.6;font-family:'JetBrains Mono',monospace;overflow-x:auto">${txt.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</pre>
+    </div>`;
+  }
 
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
         <div class="hdr-title">Anúncios</div>
-        <div class="hdr-sub">somente vendas de tráfego pago, atribuídas via SCK · atualizado em: ${D().updated||"—"}</div>
+        <div class="hdr-sub">atualizado em: ${D().updated||"—"} · ${filteredCamps.length}/${sortedCampsAll.length} campanhas · ${filteredAds.length}/${sortedAdsAll.length} anúncios${hasFilter?" · filtrando "+S.selectedCamps.size+" campanha"+(S.selectedCamps.size>1?"s":""):""} · somente vendas de tráfego</div>
       </div>
+      <div>${statusLegend()}</div>
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
 
-    <div class="section-lbl" style="margin-top:0">Campanhas</div>
-    <div class="ch" style="margin-bottom:10px">
-      <span></span>
-      <input class="search-box" placeholder="Buscar campanha..." value="${S.campSearch}" oninput="setCampSearch(this.value)"/>
+    <div class="section-lbl" style="margin-top:0">Resumo do período${hasFilter?" · campanhas selecionadas":""}</div>
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:13px;margin-bottom:20px">
+      <div class="kc"><div class="kc-lbl">Investimento</div><div class="kc-val" style="font-size:18px">${fBRL(tot.spend)}</div></div>
+      <div class="kc"><div class="kc-lbl">Vendas</div><div class="kc-val" style="font-size:18px">${tot.qtd}</div></div>
+      <div class="kc" style="border-color:${statusBorder(tot.cpv,META_CPV,false)}"><div class="kc-lbl">Custo por Venda</div><div class="kc-val" style="color:${sc(tot.cpv,META_CPV,false)};font-size:18px">${tot.qtd>0?fBRL(tot.cpv):"—"}</div><div class="kc-sub">meta ${fBRL(META_CPV)}</div></div>
+      <div class="kc"><div class="kc-lbl">Ticket Médio</div><div class="kc-val" style="font-size:18px">${tot.qtd>0?fBRL(tot.ticket):"—"}</div></div>
+      <div class="kc" style="border-color:${statusBorder(tot.roas,META_ROAS,true)}"><div class="kc-lbl">ROAS</div><div class="kc-val" style="color:${tot.roas>0?sc(tot.roas,META_ROAS,true):"var(--hint)"};font-size:18px">${tot.roas>0?tot.roas.toFixed(2)+"x":"—"}</div></div>
+      <div class="kc" style="border-color:${statusBorder(tot.ctr,METAS_T.ctr.val,true)}"><div class="kc-lbl">CTR</div><div class="kc-val" style="color:${sc(tot.ctr,METAS_T.ctr.val,true)};font-size:18px">${fPct(tot.ctr)}</div></div>
     </div>
-    <div style="overflow-x:auto;margin-bottom:26px">
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+      <span class="section-lbl" style="margin:0">Campanhas</span>
+      ${hasFilter?`<button onclick="clearCamps()" style="font-size:10px;padding:3px 10px;border-radius:6px;background:rgba(59,130,246,.18);border:1px solid rgba(96,165,250,.35);color:#93c5fd;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.selectedCamps.size})</button>`:""}
+      <input id="camp-search-input" class="search-box" placeholder="Buscar campanha..." value="${S.campSearch.replace(/"/g,"&quot;")}" oninput="setCampSearch(this.value)"/>
+      <span style="font-size:10px;color:var(--hint)">Clique para filtrar anúncios por campanha</span>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:16px">
     <table class="dtable">
       <thead><tr>
-        ${thCamp("Campanha","campName","tleft")}
+        <th style="width:20px"></th>
+        ${thC("campName","Campanha","camp","tleft")}
         <th class="tleft">Status</th>
-        ${thCamp("Anúncios","nAds")}
-        ${thCamp("Investimento","spend")}
-        ${thCamp("Cliques","clicks")}
-        ${thCamp("CTR","ctr")}
-        ${thCamp("Checkouts","checkouts")}
-        ${thCamp("Vendas","qtd")}
-        ${thCamp("Faturamento","valor")}
-        ${thCamp("CPV","cpv")}
-        ${thCamp("ROAS","roas")}
+        ${thC("spend","Investimento","camp")}
+        ${thC("qtd","Vendas","camp")}
+        ${thC("cpv","Custo/Venda","camp")}
+        ${thC("roas","ROAS","camp")}
+        ${thC("ticket","Ticket Médio","camp")}
+        ${thC("ctr","CTR","camp")}
+        ${thC("cpm","CPM","camp")}
+        ${thC("cpc","CPC","camp")}
       </tr></thead>
       <tbody>
-        ${sortedCamps.map((r,i)=>{
-          const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
+        ${filteredCamps.length===0?`<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--hint)">Nenhuma campanha encontrada</td></tr>`:""}
+        ${filteredCamps.map((r,i)=>{
+          const sel=S.selectedCamps.has(r.campName);
+          const bg=sel?"rgba(59,130,246,.12)":(i%2===0?"transparent":"rgba(255,255,255,0.02)");
+          const bord=sel?"border-left:3px solid #3b82f6":"border-left:3px solid transparent";
+          const safeN=r.campName.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
           const roasColor=r.roas>=META_ROAS?"#22c55e":r.roas>0?"#f59e0b":"var(--hint)";
-          return `<tr style="background:${bg}">
-            <td class="tleft">${r.campName}</td>
+          return `<tr data-camp="${safeN}" style="background:${bg};${bord};cursor:pointer" onclick="toggleCamp(this.dataset.camp,event.shiftKey)">
+            <td style="text-align:center">${checkbox(sel,"#3b82f6")}</td>
+            <td class="tleft" style="font-weight:600;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.campName}">${r.campName}</td>
             <td class="tleft">${statusDotFor(r.campStatus==="ACTIVE",!!r.campStatus)}</td>
-            <td>${r.nAds}</td>
             <td>${fBRL(r.spend)}</td>
-            <td>${r.clicks}</td>
-            <td>${fPct(r.ctr)}</td>
-            <td>${r.checkouts}</td>
             <td style="color:var(--text-strong);font-weight:600">${r.qtd}</td>
-            <td>${fBRL(r.valor)}</td>
-            <td>${r.cpv>0?fBRL(r.cpv):"—"}</td>
+            <td style="color:${r.qtd>0?sc(r.cpv,META_CPV,false):"var(--hint)"}">${r.qtd>0?fBRL(r.cpv):"—"}</td>
             <td style="color:${roasColor};font-weight:600">${r.roas>0?r.roas.toFixed(2)+"x":"—"}</td>
+            <td>${r.qtd>0?fBRL(r.ticket):"—"}</td>
+            <td style="color:${sc(r.ctr,METAS_T.ctr.val,true)}">${fPct(r.ctr)}</td>
+            <td style="color:${sc(r.cpm,METAS_T.cpm.val,false)}">${fBRL(r.cpm)}</td>
+            <td style="color:${sc(r.cpc,METAS_T.cpc.val,false)}">${fBRL(r.cpc)}</td>
           </tr>`;
         }).join("")}
-        <tr class="totrow">
-          <td class="tleft">Total (${sortedCamps.length} campanhas)</td><td class="tleft"></td>
-          <td>${sortedCamps.reduce((a,r)=>a+r.nAds,0)}</td>
-          <td>${fBRL(totalsCamps.spend)}</td>
-          <td>${totalsCamps.clicks}</td>
-          <td>${fPct(totalsCamps.ctr)}</td>
-          <td>${totalsCamps.checkouts}</td>
-          <td>${totalsCamps.qtd}</td>
-          <td>${fBRL(totalsCamps.valor)}</td>
-          <td>${totalsCamps.cpv>0?fBRL(totalsCamps.cpv):"—"}</td>
-          <td>${totalsCamps.roas>0?totalsCamps.roas.toFixed(2)+"x":"—"}</td>
-        </tr>
       </tbody>
     </table>
     </div>
 
-    <div class="section-lbl" style="margin-top:0">Anúncios</div>
-    <div class="ch" style="margin-bottom:10px">
-      <span></span>
-      <input class="search-box" placeholder="Buscar anúncio ou campanha..." value="${S.adSearch}" oninput="setAdSearch(this.value)"/>
+    ${selectionPanel()}
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+      <span class="section-lbl" style="margin:0">Anúncios</span>
+      ${hasFilter?`<span style="font-size:10px;color:#93c5fd;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.3);padding:2px 8px;border-radius:5px">${[...S.selectedCamps].join(", ").substring(0,80)}</span>`:""}
+      ${S.selectedAds.size>0?`<button onclick="clearSelectedAds()" style="font-size:10px;padding:3px 10px;border-radius:6px;background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.35);color:#6ee7b7;cursor:pointer;font-family:'DM Sans',sans-serif">✕ Limpar seleção (${S.selectedAds.size})</button>`:""}
+      <input id="ad-search-input" class="search-box" placeholder="Buscar anúncio..." value="${S.adSearch.replace(/"/g,"&quot;")}" oninput="setAdSearch(this.value)"/>
+      <span style="font-size:10px;color:var(--hint)">Selecione anúncios para gerar resumo ↓</span>
     </div>
     <div style="overflow-x:auto">
     <table class="dtable">
       <thead><tr>
-        ${thAd("Anúncio","adName","tleft")}
-        ${thAd("Campanha","campName","tleft")}
+        <th style="width:20px"></th>
+        ${thC("adName","Anúncio","ad","tleft")}
+        ${thC("campName","Campanha","ad","tleft")}
         <th class="tleft">Status</th>
-        ${thAd("Investimento","spend")}
-        ${thAd("Cliques","clicks")}
-        ${thAd("Impressões","impressions")}
-        ${thAd("CTR","ctr")}
-        ${thAd("CPC","cpc")}
-        ${thAd("CPM","cpm")}
-        ${thAd("Checkouts","checkouts")}
-        ${thAd("Vendas","qtd")}
-        ${thAd("Faturamento","valor")}
-        ${thAd("CPV","cpv")}
-        ${thAd("ROAS","roas")}
+        ${thC("spend","Investimento","ad")}
+        ${thC("clicks","Cliques","ad")}
+        ${thC("impressions","Impressões","ad")}
+        ${thC("ctr","CTR","ad")}
+        ${thC("cpc","CPC","ad")}
+        ${thC("cpm","CPM","ad")}
+        ${thC("checkouts","Checkouts","ad")}
+        ${thC("qtd","Vendas","ad")}
+        ${thC("valor","Faturamento","ad")}
+        ${thC("cpv","CPV","ad")}
+        ${thC("roas","ROAS","ad")}
+        <th></th>
       </tr></thead>
       <tbody>
-        ${sorted.map((r,i)=>{
-          const bg=i%2===0?"transparent":"rgba(255,255,255,0.02)";
+        ${filteredAds.length===0?`<tr><td colspan="16" style="padding:24px;text-align:center;color:var(--hint)">Nenhum anúncio encontrado${hasFilter?" para as campanhas selecionadas":""}</td></tr>`:""}
+        ${filteredAds.map((r,i)=>{
+          const sel=S.selectedAds.has(r.advCode);
+          const bg=sel?"rgba(16,185,129,.10)":(i%2===0?"transparent":"rgba(255,255,255,0.02)");
+          const bord=sel?"border-left:3px solid #10b981":"border-left:3px solid transparent";
+          const safeAd=r.advCode.replace(/&/g,"&amp;").replace(/"/g,"&quot;");
           const roasColor=r.roas>=META_ROAS?"#22c55e":r.roas>0?"#f59e0b":"var(--hint)";
-          const active=[r.adStatus,r.campStatus,r.adsetStatus].some(s=>s==="ACTIVE");
-          const hasData=!!(r.adStatus||r.campStatus||r.adsetStatus);
-          return `<tr style="background:${bg}">
-            <td class="tleft">${r.adName||r.advCode}</td>
-            <td class="tleft">${r.campName}</td>
-            <td class="tleft">${statusDotFor(active,hasData)}</td>
+          return `<tr data-ad="${safeAd}" style="background:${bg};${bord};cursor:pointer" onclick="toggleAd(this.dataset.ad,event.shiftKey)">
+            <td style="text-align:center">${checkbox(sel,"#10b981")}</td>
+            <td class="tleft"><span style="background:var(--surf);border:1px solid var(--border-h);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:600;color:var(--text);font-family:'JetBrains Mono',monospace" title="${r.adName}">${r.adName||r.advCode}</span></td>
+            <td class="tleft" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.campName}">${r.campName}</td>
+            <td class="tleft">${statusDotFor(r.isActive,r.hasStatusData)}</td>
             <td>${fBRL(r.spend)}</td>
             <td>${r.clicks}</td>
             <td>${r.impressions}</td>
-            <td>${fPct(r.ctr)}</td>
-            <td>${fBRL(r.cpc)}</td>
-            <td>${fBRL(r.cpm)}</td>
+            <td style="color:${sc(r.ctr,METAS_T.ctr.val,true)};font-weight:600">${fPct(r.ctr)}</td>
+            <td style="color:${sc(r.cpc,METAS_T.cpc.val,false)};font-weight:600">${fBRL(r.cpc)}</td>
+            <td style="color:${sc(r.cpm,METAS_T.cpm.val,false)};font-weight:600">${fBRL(r.cpm)}</td>
             <td>${r.checkouts}</td>
             <td style="color:var(--text-strong);font-weight:600">${r.qtd}</td>
             <td>${fBRL(r.valor)}</td>
-            <td>${r.cpv>0?fBRL(r.cpv):"—"}</td>
+            <td style="color:${r.qtd>0?sc(r.cpv,META_CPV,false):"var(--hint)"};font-weight:600">${r.qtd>0?fBRL(r.cpv):"—"}</td>
             <td style="color:${roasColor};font-weight:600">${r.roas>0?r.roas.toFixed(2)+"x":"—"}</td>
+            <td style="text-align:center" onclick="event.stopPropagation()">${r.igUrl?`<a href="${r.igUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:3px;background:var(--surf);border:1px solid var(--border-h);color:var(--muted);padding:4px 9px;border-radius:7px;font-size:10px;text-decoration:none;white-space:nowrap">Ver ↗</a>`:"—"}</td>
           </tr>`;
         }).join("")}
-        <tr class="totrow">
-          <td class="tleft">Total (${sorted.length} anúncios)</td>
-          <td class="tleft"></td><td class="tleft"></td>
-          <td>${fBRL(totalsAds.spend)}</td>
-          <td>${totalsAds.clicks}</td>
-          <td>${totalsAds.impressions}</td>
-          <td>${fPct(totalsAds.ctr)}</td>
-          <td>${fBRL(totalsAds.cpc)}</td>
-          <td>${fBRL(totalsAds.cpm)}</td>
-          <td>${totalsAds.checkouts}</td>
-          <td>${totalsAds.qtd}</td>
-          <td>${fBRL(totalsAds.valor)}</td>
-          <td>${totalsAds.cpv>0?fBRL(totalsAds.cpv):"—"}</td>
-          <td>${totalsAds.roas>0?totalsAds.roas.toFixed(2)+"x":"—"}</td>
-        </tr>
       </tbody>
     </table>
     </div>
+
+    ${resumoAdsPanel()}
 
     <div class="section-lbl">Vendas de tráfego sem anúncio identificado</div>
     <div class="kc" style="max-width:420px">
       <div class="kc-lbl">SCK indica anúncio pago, mas sem Ad ID reconhecível</div>
       <div class="kc-val" style="font-size:18px">${semAdvQtd} vendas · ${fBRL(semAdvValor)}</div>
-      <div class="kc-sub">Não inclui vendas orgânicas (essas ficam na aba Principal/Funil)</div>
+      <div class="kc-sub">Não inclui vendas orgânicas (essas ficam nas abas Principal/Funil)</div>
     </div>
     <p class="foot">Base Meta + Base compradores · Google Sheets</p>`;
+
+  if(_focusedId==="camp-search-input"||_focusedId==="ad-search-input"){
+    requestAnimationFrame(()=>{
+      const inp=document.getElementById(_focusedId);
+      if(inp){inp.focus();const l=inp.value.length;inp.setSelectionRange(l,l);}
+    });
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
